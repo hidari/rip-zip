@@ -1,0 +1,27 @@
+[package]
+name = "rip-zip"
+version = "0.1.0"
+edition = "2021"
+authors = ["Hidari <ika5140+github@gmail.com>"]
+description = "Handling cross-platform ZIP archives that just work everywhere."
+repository = "https://github.com/hidari/rip-zip"
+license = "MIT"
+readme = "README.md"
+keywords = ["zip", "compression", "cli", "cross-platform", "encoding"]
+categories = ["command-line-utilities", "compression", "filesystem"]
+
+[dependencies]
+zip = "2.2.2"
+walkdir = "2.5.0"
+clap = { version = "4.5.23", features = ["derive"] }
+atty = "0.2.14"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[[bin]]
+name = "rip"
+path = "src/main.rs"
