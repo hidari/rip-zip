@@ -1,14 +1,14 @@
-use std::fs::File;
-use std::io::{self};
-use zip::{ZipWriter};
-use zip::write::SimpleFileOptions;
-use walkdir::WalkDir;
-use std::path::{Path, PathBuf};
 use clap::Parser;
 use std::fmt;
+use std::fs::File;
+use std::io::{self, Error};
+use std::path::{Path, PathBuf, StripPrefixError};
+use walkdir::WalkDir;
+use zip::write::SimpleFileOptions;
+use zip::{ZipArchive, ZipWriter};
 
-const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024;  // 1GB
-const MAX_TOTAL_SIZE: u64 = 4 * 1024 * 1024 * 1024;  // 4GB
+const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
+const MAX_TOTAL_SIZE: u64 = 4 * 1024 * 1024 * 1024; // 4GB
 
 #[derive(Parser)]
 #[command(
@@ -31,19 +31,19 @@ struct Args {
 
 #[derive(Debug)]
 enum ZipError {
-    IoError(io::Error),
-    StripPrefixError(std::path::StripPrefixError),
+    IoError(Error),
+    StripPrefixError(StripPrefixError),
     ZipError(zip::result::ZipError),
 }
 
-impl From<io::Error> for ZipError {
-    fn from(err: io::Error) -> Self {
+impl From<Error> for ZipError {
+    fn from(err: Error) -> Self {
         ZipError::IoError(err)
     }
 }
 
-impl From<std::path::StripPrefixError> for ZipError {
-    fn from(err: std::path::StripPrefixError) -> Self {
+impl From<StripPrefixError> for ZipError {
+    fn from(err: StripPrefixError) -> Self {
         ZipError::StripPrefixError(err)
     }
 }
@@ -66,9 +66,9 @@ impl fmt::Display for ZipError {
 
 fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool) -> Result<(), ZipError> {
     if !source_dir.exists() {
-        return Err(ZipError::IoError(io::Error::new(
+        return Err(ZipError::IoError(Error::new(
             io::ErrorKind::NotFound,
-            format!("Source directory does not exist: {}", source_dir.display())
+            format!("Source directory does not exist: {}", source_dir.display()),
         )));
     }
 
@@ -87,20 +87,21 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool) -> Result<(),
     let walkdir = WalkDir::new(source_dir)
         .follow_links(false)
         .same_file_system(true)
-        .max_depth(100);  // 深すぎる再帰を防ぐ
+        .max_depth(100); // 深すぎる再帰を防ぐ
 
     let mut total_size: u64 = 0;
     for entry in walkdir {
-        let entry = entry.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let entry = entry.map_err(|e| Error::new(io::ErrorKind::Other, e))?;
         let path = entry.path();
 
         if path.is_file() {
             let relative_path = path.strip_prefix(source_dir)?;
 
             // 不正なパスがないかチェック
-            if relative_path.components().any(|component|
-                matches!(component, std::path::Component::ParentDir)
-            ) {
+            if relative_path
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
                 continue;
             }
 
@@ -126,9 +127,9 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool) -> Result<(),
 
             total_size += file_size;
             if total_size > MAX_TOTAL_SIZE {
-                return Err(ZipError::IoError(io::Error::new(
+                return Err(ZipError::IoError(Error::new(
                     io::ErrorKind::Other,
-                    "Total size exceeds 4GB limit"
+                    "Total size exceeds 4GB limit",
                 )));
             }
 
@@ -146,25 +147,27 @@ fn sanitize_filename(name: &str) -> String {
         .map(|c| match c {
             '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
             _ if c.is_control() || c == '/' || c == '\\' => '_',
-            _ => c
+            _ => c,
         })
         .collect()
 }
 
 fn get_zip_path(source_dir: &Path) -> PathBuf {
-    let dir_name = source_dir.file_name()
+    let dir_name = source_dir
+        .file_name()
         .unwrap_or_else(|| std::ffi::OsStr::new("archive"))
         .to_string_lossy();
     let safe_name = sanitize_filename(&dir_name);
 
-    let mut zip_path = source_dir.parent()
+    let mut zip_path = source_dir
+        .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
 
     zip_path.push(format!("{}.zip", safe_name));
 
-
-    let mut zip_path = source_dir.parent()
+    let mut zip_path = source_dir
+        .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
 
@@ -174,9 +177,7 @@ fn get_zip_path(source_dir: &Path) -> PathBuf {
     let mut counter = 1;
     let original_zip_path = zip_path.clone();
     while zip_path.exists() {
-        zip_path = original_zip_path.with_file_name(
-            format!("{} ({}).zip", safe_name, counter)
-        );
+        zip_path = original_zip_path.with_file_name(format!("{} ({}).zip", safe_name, counter));
         counter += 1;
     }
 
@@ -222,7 +223,7 @@ mod tests {
     #[test]
     fn test_japanese_filename() -> Result<(), ZipError> {
         // テスト用の一時ディレクトリを作成
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let test_dir = temp_dir.path().join("テスト");
         fs::create_dir(&test_dir)?;
 
@@ -238,8 +239,8 @@ mod tests {
         assert!(zip_path.exists());
 
         // ZIPの中身を確認
-        let zip_file = fs::File::open(&zip_path)?;
-        let archive = zip::ZipArchive::new(zip_file)?;
+        let zip_file = File::open(&zip_path)?;
+        let archive = ZipArchive::new(zip_file)?;
 
         // ファイル名が正しくUTF-8で保存されているか確認
         let file_names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
@@ -250,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_complex_japanese_filename() -> Result<(), ZipError> {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let test_dir = temp_dir.path().join("テスト");
         fs::create_dir(&test_dir)?;
 
@@ -261,8 +262,8 @@ mod tests {
         let zip_path = temp_dir.path().join("test.zip");
         create_zip(&test_dir, &zip_path, false)?;
 
-        let zip_file = fs::File::open(&zip_path)?;
-        let archive = zip::ZipArchive::new(zip_file)?;
+        let zip_file = File::open(&zip_path)?;
+        let archive = ZipArchive::new(zip_file)?;
 
         let file_names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
         assert!(file_names.contains(&"🗾日本語_テスト！＃＄％.txt".to_string()));
@@ -272,12 +273,15 @@ mod tests {
 
     #[test]
     fn test_nested_japanese_directories() -> Result<(), ZipError> {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let base_dir = temp_dir.path().join("テスト");
         fs::create_dir(&base_dir)?;
 
         // 入れ子のディレクトリを作成
-        let nested_dir = base_dir.join("フォルダー1").join("フォルダー2").join("フォルダー3");
+        let nested_dir = base_dir
+            .join("フォルダー1")
+            .join("フォルダー2")
+            .join("フォルダー3");
         fs::create_dir_all(&nested_dir)?;
 
         // ファイルを作成
@@ -288,8 +292,8 @@ mod tests {
         create_zip(&base_dir, &zip_path, false)?;
 
         // ZIPの内容を確認
-        let zip_file = fs::File::open(&zip_path)?;
-        let archive = zip::ZipArchive::new(zip_file)?;
+        let zip_file = File::open(&zip_path)?;
+        let archive = ZipArchive::new(zip_file)?;
 
         let file_names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
         assert!(file_names.iter().any(|name| name.ends_with("テスト.txt")));
@@ -299,15 +303,15 @@ mod tests {
 
     #[test]
     fn test_cross_platform_compatibility() -> Result<(), ZipError> {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let test_dir = temp_dir.path().join("クロスプラットフォーム");
         fs::create_dir(&test_dir)?;
 
         // プラットフォーム固有の文字を含むファイル名
         let filename = if cfg!(windows) {
-            "Windows用ファイル　テスト.txt"  // 全角スペース
+            "Windows用ファイル　テスト.txt" // 全角スペース
         } else {
-            "macOS用ファイル テスト.txt"    // 半角スペース
+            "macOS用ファイル テスト.txt" // 半角スペース
         };
 
         let test_file_path = test_dir.join(filename);
@@ -323,8 +327,8 @@ mod tests {
         create_zip(&test_dir, &zip_path, false)?;
 
         // ZIPの内容を確認
-        let zip_file = fs::File::open(&zip_path)?;
-        let archive = zip::ZipArchive::new(zip_file)?;
+        let zip_file = File::open(&zip_path)?;
+        let archive = ZipArchive::new(zip_file)?;
 
         let file_names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
 
@@ -341,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_platform_specific_filenames() -> Result<(), ZipError> {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let test_dir = temp_dir.path().join("プラットフォーム互換性");
         fs::create_dir(&test_dir)?;
 
@@ -369,11 +373,11 @@ mod tests {
 
         // ZIPファイル作成
         let zip_path = temp_dir.path().join("platform_test.zip");
-        create_zip(&test_dir, &zip_path, true)?;  // verboseをtrueに
+        create_zip(&test_dir, &zip_path, true)?; // verboseをtrueに
 
         // 検証
-        let zip_file = fs::File::open(&zip_path)?;
-        let archive = zip::ZipArchive::new(zip_file)?;
+        let zip_file = File::open(&zip_path)?;
+        let archive = ZipArchive::new(zip_file)?;
         let file_names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
 
         println!("\nZIP内のファイル一覧:");
@@ -382,20 +386,23 @@ mod tests {
         }
 
         // 各ケースの検証
-        assert!(file_names.iter().any(|name| name.contains("がぎぐげご")),
-                "ファイル名 'がぎぐげご' が見つかりません");
+        assert!(
+            file_names.iter().any(|name| name.contains("がぎぐげご")),
+            "ファイル名 'がぎぐげご' が見つかりません"
+        );
 
         Ok(())
     }
     #[test]
     fn test_very_long_paths() -> Result<(), ZipError> {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let test_dir = temp_dir.path().join("長いパス");
         fs::create_dir(&test_dir)?;
 
         // 深い階層のディレクトリを作成
         let mut current_dir = test_dir.clone();
-        for i in 1..20 {  // Windows上でもエラーにならない程度の深さ
+        for i in 1..20 {
+            // Windows上でもエラーにならない程度の深さ
             current_dir = current_dir.join(format!("深いディレクトリ_{}", i));
             fs::create_dir(&current_dir)?;
         }
@@ -406,17 +413,19 @@ mod tests {
         create_zip(&test_dir, &zip_path, false)?;
 
         // 検証
-        let zip_file = fs::File::open(&zip_path)?;
-        let archive = zip::ZipArchive::new(zip_file)?;
+        let zip_file = File::open(&zip_path)?;
+        let archive = ZipArchive::new(zip_file)?;
 
-        assert!(archive.file_names().any(|name| name.ends_with("テスト.txt")));
+        assert!(archive
+            .file_names()
+            .any(|name| name.ends_with("テスト.txt")));
 
         Ok(())
     }
 
     #[test]
     fn test_simulated_cross_platform_paths() -> Result<(), ZipError> {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let test_dir = temp_dir.path().join("クロスプラットフォーム");
         fs::create_dir(&test_dir)?;
 
@@ -436,8 +445,8 @@ mod tests {
         create_zip(&test_dir, &zip_path, true)?;
 
         // 検証
-        let zip_file = fs::File::open(&zip_path)?;
-        let archive = zip::ZipArchive::new(zip_file)?;
+        let zip_file = File::open(&zip_path)?;
+        let archive = ZipArchive::new(zip_file)?;
         let file_names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
 
         println!("\nZIP内のファイル一覧:");
@@ -450,7 +459,13 @@ mod tests {
 
         // 両方のファイルが存在することを確認
         assert!(file_names.iter().any(|name| name.ends_with("パス.txt")));
-        assert_eq!(file_names.iter().filter(|name| name.ends_with("パス.txt")).count(), 2);
+        assert_eq!(
+            file_names
+                .iter()
+                .filter(|name| name.ends_with("パス.txt"))
+                .count(),
+            2
+        );
 
         Ok(())
     }
