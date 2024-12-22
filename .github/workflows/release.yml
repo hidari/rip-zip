@@ -42,13 +42,13 @@ jobs:
           binary_name="rip${{ matrix.suffix }}"
           cd target/${{ matrix.target }}/release
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ../../../rip-${{ matrix.target }}.zip $binary_name
+            7z a ../../../rip-zip-${{ matrix.target }}.zip $binary_name
           else
-            zip ../../../rip-${{ matrix.target }}.zip $binary_name
+            zip ../../../rip-zip-${{ matrix.target }}.zip $binary_name
           fi
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
-          files: rip-${{ matrix.target }}.zip
+          files: rip-zip-${{ matrix.target }}.zip
           generate_release_notes: true
