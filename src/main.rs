@@ -5,7 +5,7 @@ use std::io::{self, Error};
 use std::path::{Path, PathBuf, StripPrefixError};
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
-use zip::{ZipArchive, ZipWriter};
+use zip::ZipWriter;
 
 const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
 const MAX_TOTAL_SIZE: u64 = 4 * 1024 * 1024 * 1024; // 4GB
@@ -219,6 +219,7 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use zip::ZipArchive;
 
     #[test]
     fn test_japanese_filename() -> Result<(), ZipError> {
