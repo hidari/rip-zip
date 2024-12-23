@@ -11,16 +11,23 @@ Handling cross-platform ZIP archives that just work everywhere
 
 ## Installation
 
-### From source
-
+### Using Homebrew (macOS)
 ```bash
-cargo install rip-zip
+brew install hidari/tap/rip
 ```
 
-[//]: # (### Binary releases)
+### Binary Downloads (Windows/Linux)
+Download the latest binary for your platform from the [releases page](https://github.com/hidari/rip-zip/releases).
 
-[//]: # ()
-[//]: # (Download the latest release for your platform from the [releases page]&#40;https://github.com/yourusername/rip/releases&#41;.)
+#### Windows
+1. Download `rip-zip-x86_64-pc-windows-msvc.zip`
+2. Extract the ZIP file
+3. Run `rip.exe` from the command line or use drag & drop
+
+### From source
+```bash
+cargo install --git https://github.com/hidari/rip-zip
+```
 
 ## Usage
 
