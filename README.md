@@ -37,6 +37,9 @@ cargo install --git https://github.com/hidari/rip-zip
 # Create ZIP files from directories
 rip directory1 directory2
 
+# Enable ZIP64 support for large files (>4GB)
+rip --zip64 large_directory
+
 # Show verbose output
 rip -v directory1
 
@@ -123,11 +126,13 @@ Please be cautious when compressing untrusted files or directories.
 
 ### Resource Limits
 - Individual file size limit: 1GB
-    - Prevents memory exhaustion
-    - Suitable for most use cases
-- Total ZIP size limit: 4GB
-    - Ensures ZIP32 format compatibility
-    - Prevents accidental huge archives
+    - Default: 1GB
+    - With `--zip64` flag: Theoretically up to 16 EiB (2^64 bytes)
+    - Size limits help prevent accidental memory exhaustion
+- Total ZIP size:
+    - Default: 4GB (ZIP32 format)
+    - With `--zip64` flag: Theoretically up to 16 EiB
+    - ZIP64 support requires modern unzip tools
 
 ### Platform-Specific Notes
 #### Windows
