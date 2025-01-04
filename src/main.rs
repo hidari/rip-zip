@@ -7,9 +7,6 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
-const MAX_TOTAL_SIZE: u64 = 4 * 1024 * 1024 * 1024; // 4GB
-
 #[derive(Parser)]
 #[command(
     name = "rip",
@@ -27,6 +24,10 @@ struct Args {
     /// Use verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Enable ZIP64 support for large files (>4GB)
+    #[arg(long)]
+    zip64: bool,
 }
 
 #[derive(Debug)]
@@ -64,7 +65,7 @@ impl fmt::Display for ZipError {
     }
 }
 
-fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool) -> Result<(), ZipError> {
+fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool, use_zip64: bool) -> Result<(), ZipError> {
     if !source_dir.exists() {
         return Err(ZipError::IoError(Error::new(
             io::ErrorKind::NotFound,
@@ -81,7 +82,8 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool) -> Result<(),
 
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
-        .unix_permissions(0o755);
+        .unix_permissions(0o755)
+        .large_file(use_zip64);
 
     // シンボリックリンクは追跡せず、警告を表示
     let walkdir = WalkDir::new(source_dir)
@@ -89,7 +91,6 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool) -> Result<(),
         .same_file_system(true)
         .max_depth(100); // 深すぎる再帰を防ぐ
 
-    let mut total_size: u64 = 0;
     for entry in walkdir {
         let entry = entry.map_err(|e| Error::new(io::ErrorKind::Other, e))?;
         let path = entry.path();
@@ -115,23 +116,6 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool) -> Result<(),
             }
 
             zip.start_file(&name, options)?;
-
-            let metadata = std::fs::metadata(path)?;
-            let file_size = metadata.len();
-
-            // ファイルサイズチェック
-            if file_size > MAX_FILE_SIZE {
-                eprintln!("Skipping file larger than 1GB: {}", name);
-                continue;
-            }
-
-            total_size += file_size;
-            if total_size > MAX_TOTAL_SIZE {
-                return Err(ZipError::IoError(Error::new(
-                    io::ErrorKind::Other,
-                    "Total size exceeds 4GB limit",
-                )));
-            }
 
             let mut file = File::open(path)?;
             io::copy(&mut file, &mut zip)?;
@@ -197,7 +181,7 @@ fn main() {
     for source in args.sources {
         let zip_path = get_zip_path(&source);
 
-        match create_zip(&source, &zip_path, args.verbose) {
+        match create_zip(&source, &zip_path, args.verbose, args.zip64) {
             Ok(_) => {
                 println!("Successfully created ZIP file: {}", zip_path.display());
             }
@@ -218,6 +202,7 @@ fn main() {
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::{Cursor, Write};
     use tempfile::TempDir;
     use zip::ZipArchive;
 
@@ -234,7 +219,7 @@ mod tests {
 
         // ZIPファイルを作成
         let zip_path = temp_dir.path().join("test.zip");
-        create_zip(&test_dir, &zip_path, false)?;
+        create_zip(&test_dir, &zip_path, false, false)?;
 
         // ZIPファイルを検証
         assert!(zip_path.exists());
@@ -261,7 +246,7 @@ mod tests {
         fs::write(&test_file_path, "テストデータ")?;
 
         let zip_path = temp_dir.path().join("test.zip");
-        create_zip(&test_dir, &zip_path, false)?;
+        create_zip(&test_dir, &zip_path, false, false)?;
 
         let zip_file = File::open(&zip_path)?;
         let archive = ZipArchive::new(zip_file)?;
@@ -290,7 +275,7 @@ mod tests {
         fs::write(&test_file_path, "テストデータ")?;
 
         let zip_path = temp_dir.path().join("test.zip");
-        create_zip(&base_dir, &zip_path, false)?;
+        create_zip(&base_dir, &zip_path, false, false)?;
 
         // ZIPの内容を確認
         let zip_file = File::open(&zip_path)?;
@@ -325,7 +310,7 @@ mod tests {
         fs::write(&subfile_path, "サブディレクトリのテストデータ")?;
 
         let zip_path = temp_dir.path().join("cross_platform_test.zip");
-        create_zip(&test_dir, &zip_path, false)?;
+        create_zip(&test_dir, &zip_path, false, false)?;
 
         // ZIPの内容を確認
         let zip_file = File::open(&zip_path)?;
@@ -374,7 +359,7 @@ mod tests {
 
         // ZIPファイル作成
         let zip_path = temp_dir.path().join("platform_test.zip");
-        create_zip(&test_dir, &zip_path, true)?; // verboseをtrueに
+        create_zip(&test_dir, &zip_path, true, false)?; // verboseをtrueに
 
         // 検証
         let zip_file = File::open(&zip_path)?;
@@ -411,7 +396,7 @@ mod tests {
         fs::write(current_dir.join("テスト.txt"), "深い階層のテスト")?;
 
         let zip_path = temp_dir.path().join("long_paths_test.zip");
-        create_zip(&test_dir, &zip_path, false)?;
+        create_zip(&test_dir, &zip_path, false, false)?;
 
         // 検証
         let zip_file = File::open(&zip_path)?;
@@ -443,7 +428,7 @@ mod tests {
         fs::write(&unix_path, "macOSスタイル")?;
 
         let zip_path = temp_dir.path().join("cross_platform.zip");
-        create_zip(&test_dir, &zip_path, true)?;
+        create_zip(&test_dir, &zip_path, true, false)?;
 
         // 検証
         let zip_file = File::open(&zip_path)?;
@@ -469,5 +454,33 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_zip64_option_setting() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().large_file(true);
+        writer.start_file("test.txt", options).unwrap();
+        writer.write_all(b"test").unwrap();
+        // エラーが発生しないことを確認
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn test_zip64_cli_option() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_dir = temp_dir.path().join("zip64test");
+        fs::create_dir(&test_dir).unwrap();
+        fs::write(test_dir.join("test.txt"), b"test").unwrap();
+
+        let args = Args {
+            sources: vec![test_dir.clone()],
+            verbose: false,
+            zip64: true,
+        };
+
+        // CLIオプションが正しく処理されることを確認
+        let zip_path = get_zip_path(&test_dir);
+        assert!(create_zip(&test_dir, &zip_path, args.verbose, args.zip64).is_ok());
     }
 }
