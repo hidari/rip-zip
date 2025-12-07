@@ -136,9 +136,11 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool, use_zip64: bo
                 continue;
             }
 
+            // ZIP仕様ではパス区切り文字は必ず '/' でなければならない
+            // Windowsの '\' を '/' に変換
             let name = match relative_path.to_str() {
-                Some(s) => s.to_string(),
-                None => relative_path.to_string_lossy().into_owned(),
+                Some(s) => s.replace('\\', "/"),
+                None => relative_path.to_string_lossy().replace('\\', "/"),
             };
 
             // ファイル名の長さチェック
