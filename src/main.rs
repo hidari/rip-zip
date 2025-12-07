@@ -65,11 +65,24 @@ impl fmt::Display for ZipError {
     }
 }
 
+// セキュリティ制限の定数
+const MAX_FILE_SIZE: u64 = 1_073_741_824; // 1GB
+const MAX_TOTAL_SIZE: u64 = 4_294_967_296; // 4GB (without zip64)
+const MAX_FILE_COUNT: usize = 100_000; // 最大ファイル数
+const MAX_FILENAME_LENGTH: usize = 65535; // ZIP仕様の最大ファイル名長
+
 fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool, use_zip64: bool) -> Result<(), ZipError> {
     if !source_dir.exists() {
         return Err(ZipError::IoError(Error::new(
             io::ErrorKind::NotFound,
             format!("Source directory does not exist: {}", source_dir.display()),
+        )));
+    }
+
+    if !source_dir.is_dir() {
+        return Err(ZipError::IoError(Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Source is not a directory: {}", source_dir.display()),
         )));
     }
 
@@ -91,9 +104,20 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool, use_zip64: bo
         .same_file_system(true)
         .max_depth(100); // 深すぎる再帰を防ぐ
 
+    let mut total_size: u64 = 0;
+    let mut file_count: usize = 0;
+
     for entry in walkdir {
         let entry = entry.map_err(|e| Error::new(io::ErrorKind::Other, e))?;
         let path = entry.path();
+
+        // シンボリックリンクを明示的にスキップ
+        if path.is_symlink() {
+            if verbose {
+                eprintln!("Warning: Skipping symlink: {}", path.display());
+            }
+            continue;
+        }
 
         if path.is_file() {
             let relative_path = path.strip_prefix(source_dir)?;
@@ -103,6 +127,12 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool, use_zip64: bo
                 .components()
                 .any(|component| matches!(component, std::path::Component::ParentDir))
             {
+                if verbose {
+                    eprintln!(
+                        "Warning: Skipping file with parent directory reference: {}",
+                        relative_path.display()
+                    );
+                }
                 continue;
             }
 
@@ -111,8 +141,48 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool, use_zip64: bo
                 None => relative_path.to_string_lossy().into_owned(),
             };
 
+            // ファイル名の長さチェック
+            if name.len() > MAX_FILENAME_LENGTH {
+                if verbose {
+                    eprintln!("Warning: Filename too long, skipping: {}", name);
+                }
+                continue;
+            }
+
+            // ファイル数制限チェック
+            file_count += 1;
+            if file_count > MAX_FILE_COUNT {
+                return Err(ZipError::IoError(Error::new(
+                    io::ErrorKind::Other,
+                    format!("Too many files (limit: {})", MAX_FILE_COUNT),
+                )));
+            }
+
+            // ファイルサイズチェック
+            let metadata = std::fs::metadata(path)?;
+            let file_size = metadata.len();
+
+            if file_size > MAX_FILE_SIZE && !use_zip64 {
+                eprintln!(
+                    "Warning: File {} exceeds 1GB limit, skipping. Use --zip64 for large files.",
+                    name
+                );
+                continue;
+            }
+
+            // 合計サイズチェック
+            if total_size + file_size > MAX_TOTAL_SIZE && !use_zip64 {
+                return Err(ZipError::IoError(Error::new(
+                    io::ErrorKind::Other,
+                    "Total archive size would exceed 4GB limit. Use --zip64 flag for larger archives."
+                        .to_string(),
+                )));
+            }
+
+            total_size += file_size;
+
             if verbose {
-                println!("Adding file: {}", name);
+                println!("Adding file: {} ({} bytes)", name, file_size);
             }
 
             zip.start_file(&name, options)?;
@@ -123,6 +193,14 @@ fn create_zip(source_dir: &Path, target_zip: &Path, verbose: bool, use_zip64: bo
     }
 
     zip.finish()?;
+
+    if verbose {
+        println!(
+            "Archive created: {} files, {} bytes total",
+            file_count, total_size
+        );
+    }
+
     Ok(())
 }
 
@@ -130,7 +208,7 @@ fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| match c {
             '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
-            _ if c.is_control() || c == '/' || c == '\\' => '_',
+            _ if c.is_control() => '_',
             _ => c,
         })
         .collect()
@@ -149,13 +227,6 @@ fn get_zip_path(source_dir: &Path) -> PathBuf {
         .to_path_buf();
 
     zip_path.push(format!("{}.zip", safe_name));
-
-    let mut zip_path = source_dir
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-
-    zip_path.push(format!("{}.zip", dir_name));
 
     // 同名のZIPファイルが存在する場合は連番を付ける
     let mut counter = 1;
@@ -179,6 +250,17 @@ fn main() {
     let args = Args::parse();
 
     for source in args.sources {
+        // 入力検証
+        if !source.exists() {
+            eprintln!("Error: Source does not exist: {}", source.display());
+            continue;
+        }
+
+        if !source.is_dir() {
+            eprintln!("Error: Source is not a directory: {}", source.display());
+            continue;
+        }
+
         let zip_path = get_zip_path(&source);
 
         match create_zip(&source, &zip_path, args.verbose, args.zip64) {
