@@ -1,6 +1,6 @@
 [package]
 name = "rip-zip"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Hidari <ika5140+github@gmail.com>"]
 description = "Handling cross-platform ZIP archives that just work everywhere."
