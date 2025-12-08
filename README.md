@@ -105,6 +105,7 @@ This tool implements several security measures:
   - Maximum filename length: 65,535 bytes (ZIP specification limit)
   - Maximum directory depth: 100 levels
 - **Input validation**: Verifies source paths exist and are directories
+- **Permission preservation**: On Unix-like systems (Linux, macOS), original file permissions are preserved in the archive. On Windows, default 644 (rw-r--r--) permissions are used.
 
 Please be cautious when compressing untrusted files or directories.
 

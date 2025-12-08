@@ -14,7 +14,7 @@ categories = ["command-line-utilities", "compression", "filesystem"]
 zip = "2.2.2"
 walkdir = "2.5.0"
 clap = { version = "4.5.23", features = ["derive"] }
-atty = "0.2.14"
+is-terminal = "0.4"
 tempfile = "3.14.0"
 
 [profile.release]
