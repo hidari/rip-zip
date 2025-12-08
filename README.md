@@ -95,11 +95,17 @@ To ensure file name compatibility between different platforms:
 
 This tool implements several security measures:
 
-- Protection against path traversal attacks
-- Symlink handling restrictions
-- File name sanitization
-- Resource usage limits (max file size: 1GB, total size: 4GB)
-- No symlink following outside the source directory
+- **Path traversal protection**: Files with parent directory references (`..`) are skipped with warnings
+- **Symlink handling**: Symbolic links are explicitly skipped and not followed
+- **File name sanitization**: Invalid characters in filenames are replaced with underscores
+- **Resource usage limits**:
+  - Maximum individual file size: 1GB (unless using `--zip64`)
+  - Maximum total archive size: 4GB (unless using `--zip64`)
+  - Maximum number of files: 100,000
+  - Maximum filename length: 65,535 bytes (ZIP specification limit)
+  - Maximum directory depth: 100 levels
+- **Input validation**: Verifies source paths exist and are directories
+- **Permission preservation**: On Unix-like systems (Linux, macOS), original file permissions are preserved in the archive. On Windows, default 644 (rw-r--r--) permissions are used.
 
 Please be cautious when compressing untrusted files or directories.
 
