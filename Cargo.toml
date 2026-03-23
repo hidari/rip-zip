@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/xtask"]
+
 [package]
 name = "rip-zip"
 version = "0.3.0"
