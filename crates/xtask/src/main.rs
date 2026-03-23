@@ -35,7 +35,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(unknown) => {
-            eprintln!("不明なコマンド: {unknown}");
+            eprintln!("unknown command: {unknown}");
             eprintln!();
             print_help();
             ExitCode::FAILURE
@@ -48,17 +48,17 @@ fn main() -> ExitCode {
 }
 
 fn print_help() {
-    eprintln!("rip-zip 開発タスクランナー");
+    eprintln!("rip-zip development task runner");
     eprintln!();
-    eprintln!("使い方: cargo xtask <COMMAND>");
+    eprintln!("Usage: cargo xtask <COMMAND>");
     eprintln!();
-    eprintln!("コマンド:");
-    eprintln!("  fmt       コード整形 + Lint チェック");
-    eprintln!("  test      ユニットテスト実行");
-    eprintln!("  test-all  全テスト実行（#[ignore] 付きテスト含む）");
-    eprintln!("  build     ワークスペース全体をビルド");
-    eprintln!("  check     型チェック");
-    eprintln!("  help      このヘルプを表示");
+    eprintln!("Commands:");
+    eprintln!("  fmt       Format code + lint check");
+    eprintln!("  test      Run unit tests");
+    eprintln!("  test-all  Run all tests (including #[ignore])");
+    eprintln!("  build     Build entire workspace");
+    eprintln!("  check     Type check");
+    eprintln!("  help      Show this help");
 }
 
 // コード整形 + Lint チェック
@@ -91,6 +91,6 @@ fn run_cargo(args: &[&str]) -> bool {
     let status = Command::new("cargo")
         .args(args)
         .status()
-        .expect("cargo コマンドの実行に失敗しました");
+        .expect("failed to execute cargo command");
     status.success()
 }
