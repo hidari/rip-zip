@@ -39,11 +39,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-index-
 
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Code quality check
+        run: cargo xtask fmt
 
   # クロスプラットフォームテスト
   test:
