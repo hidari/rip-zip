@@ -126,7 +126,6 @@ mod tests {
         #[test]
         fn detects_parent_dir_component() {
             assert!(has_path_traversal(Path::new("../etc/passwd")));
-            assert!(has_path_traversal(Path::new("foo/../../bar")));
             assert!(has_path_traversal(Path::new("foo/../bar")));
         }
 
@@ -138,9 +137,10 @@ mod tests {
         }
 
         #[test]
-        fn detects_middle_traversal_component() {
-            // パスの中間にある`..`コンポーネントも検出できることを確認
-            assert!(has_path_traversal(Path::new("foo/../bar")));
+        fn detects_deeply_nested_traversal() {
+            // 複数段のトラバーサルも検出できることを確認
+            assert!(has_path_traversal(Path::new("foo/../../bar")));
+            assert!(has_path_traversal(Path::new("a/b/c/../../../d")));
         }
 
         #[test]
