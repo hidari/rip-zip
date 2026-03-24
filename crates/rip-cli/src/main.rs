@@ -57,6 +57,8 @@ fn main() {
                 println!("Successfully created ZIP file: {}", zip_path.display());
             }
             Err(e) => {
+                // 不完全なZIPファイルがディスクに残らないようにクリーンアップ
+                let _ = std::fs::remove_file(&zip_path);
                 eprintln!("Error creating ZIP file for {}: {}", source.display(), e);
             }
         }
@@ -93,7 +95,11 @@ fn handle_event(event: ZipEvent, verbose: bool) {
             }
         }
         ZipEvent::FileSkipped { name, reason } => {
-            eprintln!("Warning: Skipping {}: {}", name, reason);
+            // サイズ制限超過は常に表示（ユーザーが--zip64の使用を検討できるように）
+            // それ以外はverbose時のみ表示（元の挙動を維持）
+            if reason.contains("1GB limit") || verbose {
+                eprintln!("Warning: Skipping {}: {}", name, reason);
+            }
         }
         ZipEvent::ArchiveCompleted { stats } => {
             if verbose {
