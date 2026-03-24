@@ -86,140 +86,196 @@ mod tests {
     use super::*;
     use std::fs;
 
-    #[test]
-    fn create_and_finish_produces_valid_zip() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let zip_path = dir.path().join("test.zip");
+    // --- ZipWriterArchiverの仕様テスト ---
+    // ZipWriterArchiverが提供する機能の仕様を検証するテスト群。
 
-        let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path).unwrap();
-        archiver.finish().unwrap();
+    mod lifecycle {
+        use super::*;
 
-        // 生成されたZIPファイルが読み取れることを確認
-        let file = File::open(&zip_path).unwrap();
-        let archive = zip::ZipArchive::new(file).unwrap();
-        assert_eq!(archive.len(), 0);
+        #[test]
+        fn empty_archive_is_valid_zip() {
+            // create → finish で生成された空のZIPファイルが有効であること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("test.zip");
+
+            let mut archiver = ZipWriterArchiver::new();
+            archiver.create(&zip_path).unwrap();
+            archiver.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let archive = zip::ZipArchive::new(file).unwrap();
+            assert_eq!(archive.len(), 0);
+        }
+
+        #[test]
+        fn auto_large_file_produces_readable_archive() {
+            // set_auto_large_fileにより、ZIP64が自動判定されたアーカイブが読み取り可能であること
+            let dir = tempfile::TempDir::new().unwrap();
+            let source_file = dir.path().join("file.txt");
+            fs::write(&source_file, "content").unwrap();
+
+            let zip_path = dir.path().join("auto_zip64.zip");
+            let mut archiver = ZipWriterArchiver::new();
+            archiver.create(&zip_path).unwrap();
+            archiver.add_file("file.txt", &source_file, 0o644).unwrap();
+            archiver.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let archive = zip::ZipArchive::new(file).unwrap();
+            assert_eq!(archive.len(), 1);
+        }
     }
 
-    #[test]
-    fn add_file_stores_content_correctly() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let source_file = dir.path().join("input.txt");
-        let content = "hello, zip!";
-        fs::write(&source_file, content).unwrap();
+    mod file_operations {
+        use super::*;
 
-        let zip_path = dir.path().join("output.zip");
-        let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path).unwrap();
-        archiver.add_file("input.txt", &source_file, 0o644).unwrap();
-        archiver.finish().unwrap();
+        #[test]
+        fn added_file_content_matches_source() {
+            // add_fileで追加したファイルの内容がソースと一致すること
+            let dir = tempfile::TempDir::new().unwrap();
+            let source_file = dir.path().join("input.txt");
+            let content = "hello, zip!";
+            fs::write(&source_file, content).unwrap();
 
-        // ZIPの中身を検証
-        let file = File::open(&zip_path).unwrap();
-        let mut archive = zip::ZipArchive::new(file).unwrap();
-        assert_eq!(archive.len(), 1);
+            let zip_path = dir.path().join("output.zip");
+            let mut archiver = ZipWriterArchiver::new();
+            archiver.create(&zip_path).unwrap();
+            archiver.add_file("input.txt", &source_file, 0o644).unwrap();
+            archiver.finish().unwrap();
 
-        let mut entry = archive.by_name("input.txt").unwrap();
-        let mut buf = String::new();
-        std::io::Read::read_to_string(&mut entry, &mut buf).unwrap();
-        assert_eq!(buf, content);
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = zip::ZipArchive::new(file).unwrap();
+            assert_eq!(archive.len(), 1);
+
+            let mut entry = archive.by_name("input.txt").unwrap();
+            let mut buf = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut buf).unwrap();
+            assert_eq!(buf, content);
+        }
+
+        #[test]
+        fn unicode_filename_is_preserved_in_archive() {
+            // Unicodeファイル名がアーカイブ内で保持されること
+            let dir = tempfile::TempDir::new().unwrap();
+            let source_file = dir.path().join("テスト.txt");
+            fs::write(&source_file, "日本語").unwrap();
+
+            let zip_path = dir.path().join("unicode.zip");
+            let mut archiver = ZipWriterArchiver::new();
+            archiver.create(&zip_path).unwrap();
+            archiver
+                .add_file("日本語/テスト.txt", &source_file, 0o644)
+                .unwrap();
+            archiver.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = zip::ZipArchive::new(file).unwrap();
+            let entry = archive.by_name("日本語/テスト.txt").unwrap();
+            assert_eq!(entry.name(), "日本語/テスト.txt");
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn unix_permissions_are_preserved_in_archive() {
+            // Unixパーミッションがアーカイブ内で保持されること
+            let dir = tempfile::TempDir::new().unwrap();
+            let source_file = dir.path().join("exec.sh");
+            fs::write(&source_file, "#!/bin/bash").unwrap();
+
+            let zip_path = dir.path().join("perms.zip");
+            let mut archiver = ZipWriterArchiver::new();
+            archiver.create(&zip_path).unwrap();
+            archiver.add_file("exec.sh", &source_file, 0o755).unwrap();
+            archiver.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = zip::ZipArchive::new(file).unwrap();
+            let entry = archive.by_name("exec.sh").unwrap();
+            assert_eq!(entry.unix_mode().unwrap() & 0o777, 0o755);
+        }
+
+        #[test]
+        fn multiple_files_are_all_stored_in_archive() {
+            // 複数ファイルがすべてアーカイブに格納されること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("multi.zip");
+
+            let file1 = dir.path().join("file1.txt");
+            let file2 = dir.path().join("file2.txt");
+            fs::write(&file1, "content1").unwrap();
+            fs::write(&file2, "content2").unwrap();
+
+            let mut archiver = ZipWriterArchiver::new();
+            archiver.create(&zip_path).unwrap();
+            archiver.add_file("file1.txt", &file1, 0o644).unwrap();
+            archiver.add_file("file2.txt", &file2, 0o644).unwrap();
+            archiver.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let archive = zip::ZipArchive::new(file).unwrap();
+            assert_eq!(archive.len(), 2);
+        }
+
+        #[test]
+        fn zero_byte_file_is_stored() {
+            // 0バイトファイルがアーカイブに格納されること
+            let dir = tempfile::TempDir::new().unwrap();
+            let source_file = dir.path().join("empty.txt");
+            fs::write(&source_file, "").unwrap();
+
+            let zip_path = dir.path().join("zero.zip");
+            let mut archiver = ZipWriterArchiver::new();
+            archiver.create(&zip_path).unwrap();
+            archiver.add_file("empty.txt", &source_file, 0o644).unwrap();
+            archiver.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = zip::ZipArchive::new(file).unwrap();
+            assert_eq!(archive.len(), 1);
+
+            let mut entry = archive.by_name("empty.txt").unwrap();
+            let mut buf = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut buf).unwrap();
+            assert!(buf.is_empty());
+        }
     }
 
-    #[test]
-    fn add_file_preserves_unicode_filename() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let source_file = dir.path().join("テスト.txt");
-        fs::write(&source_file, "日本語").unwrap();
+    mod error_handling {
+        use super::*;
 
-        let zip_path = dir.path().join("unicode.zip");
-        let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path).unwrap();
-        archiver
-            .add_file("日本語/テスト.txt", &source_file, 0o644)
-            .unwrap();
-        archiver.finish().unwrap();
+        #[test]
+        fn add_file_fails_before_create() {
+            // create()を呼ばずにadd_file()するとArchiveエラーを返すこと
+            let dir = tempfile::TempDir::new().unwrap();
+            let source_file = dir.path().join("input.txt");
+            fs::write(&source_file, "content").unwrap();
 
-        let file = File::open(&zip_path).unwrap();
-        let mut archive = zip::ZipArchive::new(file).unwrap();
-        let entry = archive.by_name("日本語/テスト.txt").unwrap();
-        assert_eq!(entry.name(), "日本語/テスト.txt");
-    }
+            let mut archiver = ZipWriterArchiver::new();
+            let result = archiver.add_file("input.txt", &source_file, 0o644);
+            assert!(matches!(result, Err(ZipError::Archive(_))));
+        }
 
-    #[cfg(unix)]
-    #[test]
-    fn add_file_preserves_unix_permissions() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let source_file = dir.path().join("exec.sh");
-        fs::write(&source_file, "#!/bin/bash").unwrap();
+        #[test]
+        fn finish_fails_before_create() {
+            // create()を呼ばずにfinish()するとArchiveエラーを返すこと
+            let mut archiver = ZipWriterArchiver::new();
+            let result = archiver.finish();
+            assert!(matches!(result, Err(ZipError::Archive(_))));
+        }
 
-        let zip_path = dir.path().join("perms.zip");
-        let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path).unwrap();
-        archiver.add_file("exec.sh", &source_file, 0o755).unwrap();
-        archiver.finish().unwrap();
+        #[test]
+        fn double_finish_returns_error() {
+            // finish()を2回呼ぶとArchiveエラーを返すこと（takeで状態がクリアされるため）
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("test.zip");
 
-        let file = File::open(&zip_path).unwrap();
-        let mut archive = zip::ZipArchive::new(file).unwrap();
-        let entry = archive.by_name("exec.sh").unwrap();
-        assert_eq!(entry.unix_mode().unwrap() & 0o777, 0o755);
-    }
+            let mut archiver = ZipWriterArchiver::new();
+            archiver.create(&zip_path).unwrap();
+            archiver.finish().unwrap();
 
-    #[test]
-    fn add_file_without_create_returns_error() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let source_file = dir.path().join("input.txt");
-        fs::write(&source_file, "content").unwrap();
-
-        let mut archiver = ZipWriterArchiver::new();
-        let result = archiver.add_file("input.txt", &source_file, 0o644);
-        assert!(matches!(result, Err(ZipError::Archive(_))));
-    }
-
-    #[test]
-    fn finish_without_create_returns_error() {
-        let mut archiver = ZipWriterArchiver::new();
-        let result = archiver.finish();
-        assert!(matches!(result, Err(ZipError::Archive(_))));
-    }
-
-    #[test]
-    fn auto_large_file_is_enabled() {
-        // set_auto_large_file(true)により、ZIP64が自動判定されること
-        let dir = tempfile::TempDir::new().unwrap();
-        let source_file = dir.path().join("file.txt");
-        fs::write(&source_file, "content").unwrap();
-
-        let zip_path = dir.path().join("auto_zip64.zip");
-        let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path).unwrap();
-        archiver.add_file("file.txt", &source_file, 0o644).unwrap();
-        archiver.finish().unwrap();
-
-        // auto_large_fileで作成されたファイルが正常に読み取れることを確認
-        let file = File::open(&zip_path).unwrap();
-        let archive = zip::ZipArchive::new(file).unwrap();
-        assert_eq!(archive.len(), 1);
-    }
-
-    #[test]
-    fn multiple_files_are_stored() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let zip_path = dir.path().join("multi.zip");
-
-        let file1 = dir.path().join("file1.txt");
-        let file2 = dir.path().join("file2.txt");
-        fs::write(&file1, "content1").unwrap();
-        fs::write(&file2, "content2").unwrap();
-
-        let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path).unwrap();
-        archiver.add_file("file1.txt", &file1, 0o644).unwrap();
-        archiver.add_file("file2.txt", &file2, 0o644).unwrap();
-        archiver.finish().unwrap();
-
-        let file = File::open(&zip_path).unwrap();
-        let archive = zip::ZipArchive::new(file).unwrap();
-        assert_eq!(archive.len(), 2);
+            let result = archiver.finish();
+            assert!(matches!(result, Err(ZipError::Archive(_))));
+        }
     }
 
     // --- zip crate API契約テスト ---
@@ -233,27 +289,27 @@ mod tests {
         use zip::ZipWriter;
 
         #[test]
-        fn simple_file_options_default_with_deflate_compression() {
+        fn zip_simple_file_options_supports_deflate_compression() {
             // SimpleFileOptionsがdefault()を提供し、Deflate圧縮を設定できること
             let _options =
                 SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         }
 
         #[test]
-        fn simple_file_options_supports_large_file() {
+        fn zip_simple_file_options_supports_large_file_flag() {
             // large_file()メソッドが存在し、チェーン呼び出しできること
             let _options = SimpleFileOptions::default().large_file(true);
             let _options = SimpleFileOptions::default().large_file(false);
         }
 
         #[test]
-        fn simple_file_options_supports_unix_permissions() {
+        fn zip_simple_file_options_supports_unix_permissions() {
             // unix_permissions()メソッドが存在し、チェーン呼び出しできること
             let _options = SimpleFileOptions::default().unix_permissions(0o755);
         }
 
         #[test]
-        fn zip_writer_lifecycle_new_start_file_write_finish() {
+        fn zip_writer_completes_full_lifecycle() {
             // ZipWriter: new → start_file → write → finish のライフサイクルが動作すること
             let dir = tempfile::TempDir::new().unwrap();
             let zip_path = dir.path().join("contract.zip");
@@ -274,7 +330,7 @@ mod tests {
         }
 
         #[test]
-        fn zip_archive_by_name_returns_entry() {
+        fn zip_archive_by_name_returns_matching_entry() {
             // ZipArchive::by_name()でエントリを名前から取得できること
             let dir = tempfile::TempDir::new().unwrap();
             let zip_path = dir.path().join("contract.zip");
@@ -295,7 +351,7 @@ mod tests {
 
         #[cfg(unix)]
         #[test]
-        fn zip_archive_entry_unix_mode() {
+        fn zip_archive_entry_unix_mode_returns_permissions() {
             // unix_mode()でパーミッション情報を取得できること
             let dir = tempfile::TempDir::new().unwrap();
             let zip_path = dir.path().join("contract.zip");
@@ -316,7 +372,7 @@ mod tests {
         }
 
         #[test]
-        fn zip_writer_supports_set_auto_large_file() {
+        fn zip_writer_set_auto_large_file_produces_valid_archive() {
             // set_auto_large_file()メソッドが存在し、正常に動作すること
             let dir = tempfile::TempDir::new().unwrap();
             let zip_path = dir.path().join("contract_auto.zip");
@@ -336,7 +392,7 @@ mod tests {
         }
 
         #[test]
-        fn zip_error_file_not_found_variant_exists() {
+        fn zip_error_file_not_found_has_display_impl() {
             // ZipError::FileNotFound バリアントが存在し、Displayを持つこと
             let err = zip::result::ZipError::FileNotFound;
             let msg = err.to_string();

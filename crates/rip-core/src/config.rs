@@ -18,27 +18,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn max_file_size_is_1gb() {
+    fn max_file_size_equals_1gb() {
         assert_eq!(MAX_FILE_SIZE, 1024 * 1024 * 1024);
     }
 
     #[test]
-    fn max_total_size_is_4gb() {
+    fn max_total_size_equals_4gb() {
         assert_eq!(MAX_TOTAL_SIZE, 4 * 1024 * 1024 * 1024);
     }
 
     #[test]
-    fn max_file_count_is_100k() {
+    fn max_file_count_equals_100000() {
         assert_eq!(MAX_FILE_COUNT, 100_000);
     }
 
     #[test]
-    fn max_filename_length_is_zip_spec_max() {
+    fn max_filename_length_equals_zip_spec_limit_65535() {
         assert_eq!(MAX_FILENAME_LENGTH, 65535);
     }
 
     #[test]
-    fn max_walk_depth_prevents_excessive_recursion() {
+    fn max_walk_depth_equals_100() {
         assert_eq!(MAX_WALK_DEPTH, 100);
     }
 }

@@ -48,48 +48,67 @@ pub enum ZipEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    /// FileEntry の仕様
+    mod file_entry {
+        use super::super::*;
 
-    #[test]
-    fn file_entry_is_cloneable() {
-        let entry = FileEntry {
-            path: PathBuf::from("/tmp/test/file.txt"),
-            relative_path: PathBuf::from("file.txt"),
-            is_symlink: false,
-            is_file: true,
-            size: 1024,
-            unix_permissions: 0o644,
-        };
-        let cloned = entry.clone();
-        assert_eq!(cloned.path, entry.path);
-        assert_eq!(cloned.size, entry.size);
+        #[test]
+        fn clone_preserves_all_fields() {
+            let entry = FileEntry {
+                path: PathBuf::from("/tmp/test/file.txt"),
+                relative_path: PathBuf::from("file.txt"),
+                is_symlink: false,
+                is_file: true,
+                size: 1024,
+                unix_permissions: 0o644,
+            };
+            let cloned = entry.clone();
+            // 全フィールドが保持されていることを確認
+            assert_eq!(cloned.path, entry.path);
+            assert_eq!(cloned.relative_path, entry.relative_path);
+            assert_eq!(cloned.is_symlink, entry.is_symlink);
+            assert_eq!(cloned.is_file, entry.is_file);
+            assert_eq!(cloned.size, entry.size);
+            assert_eq!(cloned.unix_permissions, entry.unix_permissions);
+        }
     }
 
-    #[test]
-    fn zip_stats_defaults_to_zero() {
-        let stats = ZipStats::default();
-        assert_eq!(stats.file_count, 0);
-        assert_eq!(stats.total_size, 0);
+    /// ZipStats の仕様
+    mod zip_stats {
+        use super::super::*;
+
+        #[test]
+        fn default_initializes_to_zero() {
+            let stats = ZipStats::default();
+            assert_eq!(stats.file_count, 0);
+            assert_eq!(stats.total_size, 0);
+        }
     }
 
-    #[test]
-    fn zip_event_variants_are_constructable() {
-        let _ = ZipEvent::FileAdded {
-            name: "test.txt".to_string(),
-            size: 100,
-        };
-        let _ = ZipEvent::SymlinkSkipped {
-            path: PathBuf::from("/tmp/link"),
-        };
-        let _ = ZipEvent::FileSkipped {
-            name: "big.bin".to_string(),
-            reason: "exceeds size limit".to_string(),
-        };
-        let _ = ZipEvent::ArchiveStarted {
-            target: PathBuf::from("/tmp/out.zip"),
-        };
-        let _ = ZipEvent::ArchiveCompleted {
-            stats: ZipStats::default(),
-        };
+    /// ZipEvent の仕様
+    mod zip_event {
+        use super::super::*;
+
+        #[test]
+        fn all_variants_are_constructable() {
+            // 全バリアントが構築可能であることを確認
+            let _ = ZipEvent::FileAdded {
+                name: "test.txt".to_string(),
+                size: 100,
+            };
+            let _ = ZipEvent::SymlinkSkipped {
+                path: PathBuf::from("/tmp/link"),
+            };
+            let _ = ZipEvent::FileSkipped {
+                name: "big.bin".to_string(),
+                reason: "exceeds size limit".to_string(),
+            };
+            let _ = ZipEvent::ArchiveStarted {
+                target: PathBuf::from("/tmp/out.zip"),
+            };
+            let _ = ZipEvent::ArchiveCompleted {
+                stats: ZipStats::default(),
+            };
+        }
     }
 }

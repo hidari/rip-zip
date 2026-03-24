@@ -15,7 +15,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_terminal_adapter_is_constructable_and_callable() {
+    fn is_stdin_terminal_returns_without_panic() {
         let adapter = IsTerminalAdapter;
         // CI環境ではfalseになるため、呼び出せることだけを確認
         let _ = adapter.is_stdin_terminal();

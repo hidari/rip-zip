@@ -18,14 +18,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_zip_error_converts_to_archive_variant() {
+    fn zip_error_converts_to_archive_variant() {
         let zip_err = zip::result::ZipError::FileNotFound;
         let result = from_zip_error(zip_err);
         assert!(matches!(result, ZipError::Archive(msg) if !msg.is_empty()));
     }
 
     #[test]
-    fn from_walkdir_error_converts_to_walk_variant() {
+    fn walkdir_error_converts_to_walk_variant() {
         let dir = tempfile::TempDir::new().unwrap();
         let nonexistent = dir.path().join("definitely_nonexistent_subdir");
         let mut walker = walkdir::WalkDir::new(&nonexistent).into_iter();
