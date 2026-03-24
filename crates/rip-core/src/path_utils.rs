@@ -136,7 +136,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn get_zip_path_sanitizes_directory_name() {
+        // Windowsでは `:` がファイル名に使えないためUnix限定
         let dir = tempfile::TempDir::new().unwrap();
         let source = dir.path().join("my:project");
         std::fs::create_dir(&source).unwrap();
