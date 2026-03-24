@@ -84,137 +84,178 @@ mod tests {
     use super::*;
     use std::fs;
 
-    #[test]
-    fn walk_returns_file_entries_for_regular_files() {
-        let dir = tempfile::TempDir::new().unwrap();
-        fs::write(dir.path().join("file1.txt"), "hello").unwrap();
-        fs::write(dir.path().join("file2.txt"), "world").unwrap();
+    mod file_discovery {
+        use super::*;
 
-        let walker = WalkDirWalker;
-        let entries: Vec<_> = walker
-            .walk(dir.path())
-            .filter_map(Result::ok)
-            .filter(|e| e.is_file)
-            .collect();
+        #[test]
+        fn returns_entries_for_regular_files() {
+            let dir = tempfile::TempDir::new().unwrap();
+            fs::write(dir.path().join("file1.txt"), "hello").unwrap();
+            fs::write(dir.path().join("file2.txt"), "world").unwrap();
 
-        assert_eq!(entries.len(), 2);
-        assert!(entries.iter().all(|e| e.is_file));
-        assert!(entries.iter().all(|e| !e.is_symlink));
-    }
+            let walker = WalkDirWalker;
+            let entries: Vec<_> = walker
+                .walk(dir.path())
+                .filter_map(Result::ok)
+                .filter(|e| e.is_file)
+                .collect();
 
-    #[test]
-    fn walk_sets_correct_relative_paths() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let sub = dir.path().join("sub");
-        fs::create_dir(&sub).unwrap();
-        fs::write(sub.join("nested.txt"), "content").unwrap();
-
-        let walker = WalkDirWalker;
-        let entries: Vec<_> = walker
-            .walk(dir.path())
-            .filter_map(Result::ok)
-            .filter(|e| e.is_file)
-            .collect();
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(
-            entries[0].relative_path,
-            std::path::PathBuf::from("sub/nested.txt")
-        );
-    }
-
-    #[test]
-    fn walk_detects_symlinks() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let target = dir.path().join("target.txt");
-        fs::write(&target, "content").unwrap();
-
-        let link = dir.path().join("link.txt");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-        #[cfg(not(unix))]
-        {
-            // Windows環境ではシンボリックリンクテストをスキップ
-            return;
+            assert_eq!(entries.len(), 2);
+            assert!(entries.iter().all(|e| e.is_file));
+            assert!(entries.iter().all(|e| !e.is_symlink));
         }
 
-        let walker = WalkDirWalker;
-        let entries: Vec<_> = walker.walk(dir.path()).filter_map(Result::ok).collect();
+        #[test]
+        fn sets_correct_relative_paths_for_nested_files() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let sub = dir.path().join("sub");
+            fs::create_dir(&sub).unwrap();
+            fs::write(sub.join("nested.txt"), "content").unwrap();
 
-        let symlink_entry = entries.iter().find(|e| e.path == link);
-        assert!(symlink_entry.is_some());
-        assert!(symlink_entry.unwrap().is_symlink);
+            let walker = WalkDirWalker;
+            let entries: Vec<_> = walker
+                .walk(dir.path())
+                .filter_map(Result::ok)
+                .filter(|e| e.is_file)
+                .collect();
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(
+                entries[0].relative_path,
+                std::path::PathBuf::from("sub/nested.txt")
+            );
+        }
+
+        #[test]
+        fn traverses_deeply_nested_directory_structure() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let deep = dir.path().join("a").join("b").join("c");
+            fs::create_dir_all(&deep).unwrap();
+            fs::write(deep.join("deep.txt"), "deep").unwrap();
+
+            let walker = WalkDirWalker;
+            let file_entries: Vec<_> = walker
+                .walk(dir.path())
+                .filter_map(Result::ok)
+                .filter(|e| e.is_file)
+                .collect();
+
+            assert_eq!(file_entries.len(), 1);
+            assert_eq!(
+                file_entries[0].relative_path,
+                std::path::PathBuf::from("a/b/c/deep.txt")
+            );
+        }
+
+        #[test]
+        fn returns_empty_iterator_for_empty_directory() {
+            let dir = tempfile::TempDir::new().unwrap();
+
+            let walker = WalkDirWalker;
+            let entries: Vec<_> = walker.walk(dir.path()).filter_map(Result::ok).collect();
+
+            assert!(entries.is_empty());
+        }
     }
 
-    #[test]
-    fn walk_returns_file_sizes() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let content = "hello world";
-        fs::write(dir.path().join("file.txt"), content).unwrap();
+    mod metadata {
+        use super::*;
 
-        let walker = WalkDirWalker;
-        let entries: Vec<_> = walker
-            .walk(dir.path())
-            .filter_map(Result::ok)
-            .filter(|e| e.is_file)
-            .collect();
+        #[test]
+        fn returns_accurate_file_sizes() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let content = "hello world";
+            fs::write(dir.path().join("file.txt"), content).unwrap();
 
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].size, content.len() as u64);
+            let walker = WalkDirWalker;
+            let entries: Vec<_> = walker
+                .walk(dir.path())
+                .filter_map(Result::ok)
+                .filter(|e| e.is_file)
+                .collect();
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].size, content.len() as u64);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn returns_unix_permissions_from_filesystem() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir = tempfile::TempDir::new().unwrap();
+            let file = dir.path().join("file.txt");
+            fs::write(&file, "content").unwrap();
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+
+            let walker = WalkDirWalker;
+            let entries: Vec<_> = walker
+                .walk(dir.path())
+                .filter_map(Result::ok)
+                .filter(|e| e.is_file)
+                .collect();
+
+            assert_eq!(entries.len(), 1);
+            // modeはファイルタイプビットを含むため、下位12ビットのみ比較
+            assert_eq!(entries[0].unix_permissions & 0o777, 0o755);
+        }
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn walk_returns_unix_permissions() {
-        use std::os::unix::fs::PermissionsExt;
+    mod filtering {
+        use super::*;
 
-        let dir = tempfile::TempDir::new().unwrap();
-        let file = dir.path().join("file.txt");
-        fs::write(&file, "content").unwrap();
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+        #[test]
+        fn detects_symlinks_with_is_symlink_flag() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let target = dir.path().join("target.txt");
+            fs::write(&target, "content").unwrap();
 
-        let walker = WalkDirWalker;
-        let entries: Vec<_> = walker
-            .walk(dir.path())
-            .filter_map(Result::ok)
-            .filter(|e| e.is_file)
-            .collect();
+            let link = dir.path().join("link.txt");
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            #[cfg(not(unix))]
+            {
+                // Windows環境ではシンボリックリンクテストをスキップ
+                return;
+            }
 
-        assert_eq!(entries.len(), 1);
-        // modeはファイルタイプビットを含むため、下位12ビットのみ比較
-        assert_eq!(entries[0].unix_permissions & 0o777, 0o755);
-    }
+            let walker = WalkDirWalker;
+            let entries: Vec<_> = walker.walk(dir.path()).filter_map(Result::ok).collect();
 
-    #[test]
-    fn walk_skips_source_directory_itself() {
-        let dir = tempfile::TempDir::new().unwrap();
-        fs::write(dir.path().join("file.txt"), "content").unwrap();
+            let symlink_entry = entries.iter().find(|e| e.path == link);
+            assert!(symlink_entry.is_some());
+            assert!(symlink_entry.unwrap().is_symlink);
+        }
 
-        let walker = WalkDirWalker;
-        let entries: Vec<_> = walker.walk(dir.path()).filter_map(Result::ok).collect();
+        #[test]
+        fn excludes_source_directory_from_results() {
+            let dir = tempfile::TempDir::new().unwrap();
+            fs::write(dir.path().join("file.txt"), "content").unwrap();
 
-        // ソースディレクトリ自体はエントリに含まれない
-        assert!(entries.iter().all(|e| e.path != dir.path()));
-    }
+            let walker = WalkDirWalker;
+            let entries: Vec<_> = walker.walk(dir.path()).filter_map(Result::ok).collect();
 
-    #[test]
-    fn walk_handles_nested_directories() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let deep = dir.path().join("a").join("b").join("c");
-        fs::create_dir_all(&deep).unwrap();
-        fs::write(deep.join("deep.txt"), "deep").unwrap();
+            // ソースディレクトリ自体はエントリに含まれない
+            assert!(entries.iter().all(|e| e.path != dir.path()));
+        }
 
-        let walker = WalkDirWalker;
-        let file_entries: Vec<_> = walker
-            .walk(dir.path())
-            .filter_map(Result::ok)
-            .filter(|e| e.is_file)
-            .collect();
+        #[test]
+        fn includes_hidden_files() {
+            let dir = tempfile::TempDir::new().unwrap();
+            fs::write(dir.path().join(".hidden"), "secret").unwrap();
 
-        assert_eq!(file_entries.len(), 1);
-        assert_eq!(
-            file_entries[0].relative_path,
-            std::path::PathBuf::from("a/b/c/deep.txt")
-        );
+            let walker = WalkDirWalker;
+            let entries: Vec<_> = walker
+                .walk(dir.path())
+                .filter_map(Result::ok)
+                .filter(|e| e.is_file)
+                .collect();
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(
+                entries[0].relative_path,
+                std::path::PathBuf::from(".hidden")
+            );
+        }
     }
 }
