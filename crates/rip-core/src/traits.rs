@@ -18,7 +18,9 @@ pub trait FileWalker {
 /// create → add_file (N回) → finish のライフサイクルを持つ。
 pub trait ZipArchiver {
     /// ZIPファイルへの書き込みを開始する
-    fn create(&mut self, target_zip: &Path, use_zip64: bool) -> Result<(), ZipError>;
+    ///
+    /// ZIP64形式はzip crateが自動判定するため、呼び出し側での指定は不要。
+    fn create(&mut self, target_zip: &Path) -> Result<(), ZipError>;
 
     /// ファイルをZIPに追加する
     fn add_file(

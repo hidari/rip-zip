@@ -9,6 +9,8 @@ use zip::ZipWriter;
 
 use crate::error_convert::from_zip_error;
 
+const NOT_INITIALIZED_ERROR: &str = "Archiver not initialized. Call create() first.";
+
 /// zipクレートを使用したZipArchiver実装
 ///
 /// ZipWriterをラップし、create → add_file (N回) → finish のライフサイクルを管理する。
@@ -23,9 +25,10 @@ impl ZipWriterArchiver {
     }
 
     fn active_state(&mut self) -> Result<(&mut ZipWriter<File>, &SimpleFileOptions), ZipError> {
-        let (writer, options) = self.state.as_mut().ok_or_else(|| {
-            ZipError::Archive("Archiver not initialized. Call create() first.".to_string())
-        })?;
+        let (writer, options) = self
+            .state
+            .as_mut()
+            .ok_or_else(|| ZipError::Archive(NOT_INITIALIZED_ERROR.to_string()))?;
         Ok((writer, options))
     }
 }
@@ -37,13 +40,12 @@ impl Default for ZipWriterArchiver {
 }
 
 impl ZipArchiver for ZipWriterArchiver {
-    fn create(&mut self, target_zip: &Path, use_zip64: bool) -> Result<(), ZipError> {
+    fn create(&mut self, target_zip: &Path) -> Result<(), ZipError> {
         let zip_file = File::create(target_zip)?;
-        let writer = ZipWriter::new(zip_file);
+        let writer = ZipWriter::new(zip_file).set_auto_large_file();
 
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .large_file(use_zip64);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         self.state = Some((writer, options));
         Ok(())
@@ -69,9 +71,10 @@ impl ZipArchiver for ZipWriterArchiver {
     }
 
     fn finish(&mut self) -> Result<(), ZipError> {
-        let (writer, _) = self.state.take().ok_or_else(|| {
-            ZipError::Archive("Archiver not initialized. Call create() first.".to_string())
-        })?;
+        let (writer, _) = self
+            .state
+            .take()
+            .ok_or_else(|| ZipError::Archive(NOT_INITIALIZED_ERROR.to_string()))?;
 
         writer.finish().map_err(from_zip_error)?;
         Ok(())
@@ -89,7 +92,7 @@ mod tests {
         let zip_path = dir.path().join("test.zip");
 
         let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path, false).unwrap();
+        archiver.create(&zip_path).unwrap();
         archiver.finish().unwrap();
 
         // 生成されたZIPファイルが読み取れることを確認
@@ -107,7 +110,7 @@ mod tests {
 
         let zip_path = dir.path().join("output.zip");
         let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path, false).unwrap();
+        archiver.create(&zip_path).unwrap();
         archiver.add_file("input.txt", &source_file, 0o644).unwrap();
         archiver.finish().unwrap();
 
@@ -130,7 +133,7 @@ mod tests {
 
         let zip_path = dir.path().join("unicode.zip");
         let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path, false).unwrap();
+        archiver.create(&zip_path).unwrap();
         archiver
             .add_file("日本語/テスト.txt", &source_file, 0o644)
             .unwrap();
@@ -151,7 +154,7 @@ mod tests {
 
         let zip_path = dir.path().join("perms.zip");
         let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path, false).unwrap();
+        archiver.create(&zip_path).unwrap();
         archiver.add_file("exec.sh", &source_file, 0o755).unwrap();
         archiver.finish().unwrap();
 
@@ -180,18 +183,19 @@ mod tests {
     }
 
     #[test]
-    fn zip64_option_is_applied() {
+    fn auto_large_file_is_enabled() {
+        // set_auto_large_file(true)により、ZIP64が自動判定されること
         let dir = tempfile::TempDir::new().unwrap();
         let source_file = dir.path().join("file.txt");
         fs::write(&source_file, "content").unwrap();
 
-        let zip_path = dir.path().join("zip64.zip");
+        let zip_path = dir.path().join("auto_zip64.zip");
         let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path, true).unwrap();
+        archiver.create(&zip_path).unwrap();
         archiver.add_file("file.txt", &source_file, 0o644).unwrap();
         archiver.finish().unwrap();
 
-        // ZIP64で作成されたファイルが正常に読み取れることを確認
+        // auto_large_fileで作成されたファイルが正常に読み取れることを確認
         let file = File::open(&zip_path).unwrap();
         let archive = zip::ZipArchive::new(file).unwrap();
         assert_eq!(archive.len(), 1);
@@ -208,7 +212,7 @@ mod tests {
         fs::write(&file2, "content2").unwrap();
 
         let mut archiver = ZipWriterArchiver::new();
-        archiver.create(&zip_path, false).unwrap();
+        archiver.create(&zip_path).unwrap();
         archiver.add_file("file1.txt", &file1, 0o644).unwrap();
         archiver.add_file("file2.txt", &file2, 0o644).unwrap();
         archiver.finish().unwrap();
@@ -309,6 +313,26 @@ mod tests {
             let mut archive = zip::ZipArchive::new(file).unwrap();
             let entry = archive.by_name("exec.sh").unwrap();
             assert_eq!(entry.unix_mode().unwrap() & 0o777, 0o755);
+        }
+
+        #[test]
+        fn zip_writer_supports_set_auto_large_file() {
+            // set_auto_large_file()メソッドが存在し、正常に動作すること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("contract_auto.zip");
+            let zip_file = File::create(&zip_path).unwrap();
+
+            let mut writer = ZipWriter::new(zip_file).set_auto_large_file();
+
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            writer.start_file("auto.txt", options).unwrap();
+            writer.write_all(b"auto large file test").unwrap();
+            writer.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let archive = zip::ZipArchive::new(file).unwrap();
+            assert_eq!(archive.len(), 1);
         }
 
         #[test]
