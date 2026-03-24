@@ -26,12 +26,18 @@ mod tests {
 
     #[test]
     fn from_walkdir_error_converts_to_walk_variant() {
-        // walkdir::Error は直接生成が難しいため、存在しないパスへの走査で発生させる
-        let mut walker = walkdir::WalkDir::new("/nonexistent/path/for/test").into_iter();
-        if let Some(Err(err)) = walker.next() {
-            let result = from_walkdir_error(err);
-            assert!(matches!(result, ZipError::Walk(msg) if !msg.is_empty()));
+        let dir = tempfile::TempDir::new().unwrap();
+        let nonexistent = dir.path().join("definitely_nonexistent_subdir");
+        let mut walker = walkdir::WalkDir::new(&nonexistent).into_iter();
+        match walker.next() {
+            Some(Err(err)) => {
+                let result = from_walkdir_error(err);
+                assert!(matches!(result, ZipError::Walk(msg) if !msg.is_empty()));
+            }
+            other => panic!(
+                "Expected walkdir error for nonexistent path, got: {:?}",
+                other.map(|r| r.map(|e| e.path().to_path_buf()))
+            ),
         }
-        // パスが存在する場合（テスト環境によっては発生しない）はスキップ
     }
 }

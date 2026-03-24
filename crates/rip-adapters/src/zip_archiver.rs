@@ -12,17 +12,21 @@ use crate::error_convert::from_zip_error;
 /// zipクレートを使用したZipArchiver実装
 ///
 /// ZipWriterをラップし、create → add_file (N回) → finish のライフサイクルを管理する。
+/// writerとoptionsは常に同時に存在するため、単一のOptionで管理する。
 pub struct ZipWriterArchiver {
-    writer: Option<ZipWriter<File>>,
-    options: Option<SimpleFileOptions>,
+    state: Option<(ZipWriter<File>, SimpleFileOptions)>,
 }
 
 impl ZipWriterArchiver {
     pub fn new() -> Self {
-        Self {
-            writer: None,
-            options: None,
-        }
+        Self { state: None }
+    }
+
+    fn active_state(&mut self) -> Result<(&mut ZipWriter<File>, &SimpleFileOptions), ZipError> {
+        let (writer, options) = self.state.as_mut().ok_or_else(|| {
+            ZipError::Archive("Archiver not initialized. Call create() first.".to_string())
+        })?;
+        Ok((writer, options))
     }
 }
 
@@ -41,8 +45,7 @@ impl ZipArchiver for ZipWriterArchiver {
             .compression_method(zip::CompressionMethod::Deflated)
             .large_file(use_zip64);
 
-        self.writer = Some(writer);
-        self.options = Some(options);
+        self.state = Some((writer, options));
         Ok(())
     }
 
@@ -52,14 +55,7 @@ impl ZipArchiver for ZipWriterArchiver {
         source_path: &Path,
         unix_permissions: u32,
     ) -> Result<(), ZipError> {
-        let writer = self.writer.as_mut().ok_or_else(|| {
-            ZipError::Archive("Archiver not initialized. Call create() first.".to_string())
-        })?;
-
-        let options = self
-            .options
-            .as_ref()
-            .ok_or_else(|| ZipError::Archive("Options not initialized.".to_string()))?;
+        let (writer, options) = self.active_state()?;
 
         let file_options = options.unix_permissions(unix_permissions);
         writer
@@ -73,12 +69,11 @@ impl ZipArchiver for ZipWriterArchiver {
     }
 
     fn finish(&mut self) -> Result<(), ZipError> {
-        let writer = self.writer.take().ok_or_else(|| {
+        let (writer, _) = self.state.take().ok_or_else(|| {
             ZipError::Archive("Archiver not initialized. Call create() first.".to_string())
         })?;
 
         writer.finish().map_err(from_zip_error)?;
-        self.options = None;
         Ok(())
     }
 }

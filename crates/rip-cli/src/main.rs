@@ -35,17 +35,6 @@ fn main() {
     let args = Args::parse();
 
     for source in &args.sources {
-        // 入力検証
-        if !source.exists() {
-            eprintln!("Error: Source does not exist: {}", source.display());
-            continue;
-        }
-
-        if !source.is_dir() {
-            eprintln!("Error: Source is not a directory: {}", source.display());
-            continue;
-        }
-
         let zip_path = get_zip_path(source);
 
         let walker = WalkDirWalker;

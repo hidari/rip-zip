@@ -32,11 +32,13 @@ pub fn get_zip_path(source_dir: &Path) -> PathBuf {
     zip_path.push(format!("{}.zip", safe_name));
 
     // 同名のZIPファイルが存在する場合は連番を付ける
-    let mut counter = 1;
-    let original_zip_path = zip_path.clone();
-    while zip_path.exists() {
-        zip_path = original_zip_path.with_file_name(format!("{} ({}).zip", safe_name, counter));
-        counter += 1;
+    if zip_path.exists() {
+        let base = zip_path.clone();
+        let mut counter = 1;
+        while zip_path.exists() {
+            zip_path = base.with_file_name(format!("{} ({}).zip", safe_name, counter));
+            counter += 1;
+        }
     }
 
     zip_path

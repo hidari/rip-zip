@@ -32,9 +32,7 @@ pub fn create_zip(
 
         // シンボリックリンクをスキップ
         if entry.is_symlink {
-            on_event(ZipEvent::SymlinkSkipped {
-                path: entry.path.clone(),
-            });
+            on_event(ZipEvent::SymlinkSkipped { path: entry.path });
             continue;
         }
 
@@ -133,36 +131,35 @@ mod tests {
     }
 
     struct FakeArchiver {
-        added_files: RefCell<Vec<(String, PathBuf, u32)>>,
-        created: RefCell<bool>,
-        finished: RefCell<bool>,
+        added_files: Vec<(String, PathBuf, u32)>,
+        created: bool,
+        finished: bool,
     }
 
     impl FakeArchiver {
         fn new() -> Self {
             Self {
-                added_files: RefCell::new(Vec::new()),
-                created: RefCell::new(false),
-                finished: RefCell::new(false),
+                added_files: Vec::new(),
+                created: false,
+                finished: false,
             }
         }
     }
 
     impl ZipArchiver for FakeArchiver {
         fn create(&mut self, _target: &Path, _zip64: bool) -> Result<(), ZipError> {
-            *self.created.get_mut() = true;
+            self.created = true;
             Ok(())
         }
 
         fn add_file(&mut self, name: &str, path: &Path, perms: u32) -> Result<(), ZipError> {
             self.added_files
-                .get_mut()
                 .push((name.to_string(), path.to_path_buf(), perms));
             Ok(())
         }
 
         fn finish(&mut self) -> Result<(), ZipError> {
-            *self.finished.get_mut() = true;
+            self.finished = true;
             Ok(())
         }
     }
@@ -218,7 +215,7 @@ mod tests {
 
         assert!(matches!(result, Err(ZipError::Validation(msg)) if msg.contains("does not exist")));
         // archiverのcreateは呼ばれていないことを確認
-        assert!(!*archiver.created.borrow());
+        assert!(!archiver.created);
     }
 
     #[test]
@@ -251,7 +248,7 @@ mod tests {
         assert_eq!(stats.file_count, 2);
         assert_eq!(stats.total_size, 300);
 
-        let added = archiver.added_files.borrow();
+        let added = &archiver.added_files;
         assert_eq!(added.len(), 2);
         assert_eq!(added[0].0, "file1.txt");
         assert_eq!(added[1].0, "sub/file2.rs");
@@ -314,7 +311,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(stats.file_count, 1);
-        assert_eq!(archiver.added_files.borrow().len(), 1);
+        assert_eq!(archiver.added_files.len(), 1);
     }
 
     #[test]
@@ -372,7 +369,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(stats.file_count, 0);
-        assert!(archiver.added_files.borrow().is_empty());
+        assert!(archiver.added_files.is_empty());
     }
 
     #[test]
@@ -525,8 +522,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(*archiver.created.borrow());
-        assert!(*archiver.finished.borrow());
-        assert_eq!(archiver.added_files.borrow().len(), 1);
+        assert!(archiver.created);
+        assert!(archiver.finished);
+        assert_eq!(archiver.added_files.len(), 1);
     }
 }

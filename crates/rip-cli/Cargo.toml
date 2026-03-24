@@ -1,11 +1,11 @@
 [package]
 name = "rip-zip"
 version = "0.3.0"
-edition = "2021"
-authors = ["Hidari <ika5140+github@gmail.com>"]
+edition.workspace = true
+authors.workspace = true
 description = "Handling cross-platform ZIP archives that just work everywhere."
-repository = "https://github.com/hidari/rip-zip"
-license = "MIT"
+repository.workspace = true
+license.workspace = true
 readme = "../../README.md"
 keywords = ["zip", "compression", "cli", "cross-platform", "encoding"]
 categories = ["command-line-utilities", "compression", "filesystem"]
@@ -13,11 +13,11 @@ categories = ["command-line-utilities", "compression", "filesystem"]
 [dependencies]
 rip-core = { path = "../rip-core" }
 rip-adapters = { path = "../rip-adapters" }
-clap = { version = "4.5.23", features = ["derive"] }
+clap.workspace = true
 
 [dev-dependencies]
-tempfile = "3.14.0"
-zip = "2.2.2"
+tempfile.workspace = true
+zip.workspace = true
 
 [[bin]]
 name = "rip"

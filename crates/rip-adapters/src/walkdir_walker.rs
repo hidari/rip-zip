@@ -33,8 +33,10 @@ impl FileWalker for WalkDirWalker {
                         return None;
                     }
 
-                    let is_symlink = path.is_symlink();
-                    let is_file = path.is_file();
+                    // walkdir::DirEntryのキャッシュ済みfile_typeを使い、冗長なsyscallを回避
+                    let file_type = entry.file_type();
+                    let is_symlink = file_type.is_symlink();
+                    let is_file = file_type.is_file();
 
                     let relative_path = match path.strip_prefix(&source_dir) {
                         Ok(rel) => rel.to_path_buf(),
@@ -42,7 +44,8 @@ impl FileWalker for WalkDirWalker {
                     };
 
                     let (size, unix_permissions) = if is_file && !is_symlink {
-                        match std::fs::metadata(&path) {
+                        // entry.metadata()はwalkdirがキャッシュしたstatを再利用する
+                        match entry.metadata() {
                             Ok(metadata) => {
                                 let size = metadata.len();
                                 #[cfg(unix)]
@@ -54,7 +57,7 @@ impl FileWalker for WalkDirWalker {
                                 let perms = 0o644;
                                 (size, perms)
                             }
-                            Err(err) => return Some(Err(ZipError::Io(err))),
+                            Err(err) => return Some(Err(from_walkdir_error(err))),
                         }
                     } else {
                         (0, 0o644)

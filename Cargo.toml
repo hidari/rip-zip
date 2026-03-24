@@ -8,6 +8,13 @@ authors = ["Hidari <ika5140+github@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/hidari/rip-zip"
 
+[workspace.dependencies]
+tempfile = "3.14.0"
+zip = "2.2.2"
+walkdir = "2.5.0"
+clap = { version = "4.5.23", features = ["derive"] }
+is-terminal = "0.4"
+
 [profile.release]
 opt-level = 3
 lto = true
