@@ -49,66 +49,82 @@ impl std::error::Error for ZipError {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    /// From トレイト変換の仕様
+    mod conversion {
+        use super::super::*;
 
-    #[test]
-    fn io_error_converts_from_std_io_error() {
-        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let zip_err: ZipError = io_err.into();
+        #[test]
+        fn io_error_converts_from_std() {
+            let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+            let zip_err: ZipError = io_err.into();
 
-        assert!(matches!(zip_err, ZipError::Io(_)));
-        assert!(zip_err.to_string().contains("file not found"));
+            assert!(matches!(zip_err, ZipError::Io(_)));
+            assert!(zip_err.to_string().contains("file not found"));
+        }
+
+        #[test]
+        fn strip_prefix_error_converts_from_std() {
+            use std::path::Path;
+            // strip_prefix で実際にエラーを生成
+            let err = Path::new("a/b").strip_prefix("c").unwrap_err();
+            let zip_err: ZipError = err.into();
+
+            assert!(matches!(zip_err, ZipError::StripPrefix(_)));
+            assert!(zip_err.to_string().contains("Path error"));
+        }
+
+        #[test]
+        fn archive_variant_preserves_original_message() {
+            let zip_err = ZipError::Archive("corrupted archive".to_string());
+            assert!(zip_err.to_string().contains("corrupted archive"));
+        }
+
+        #[test]
+        fn walk_variant_preserves_original_message() {
+            let zip_err = ZipError::Walk("permission denied".to_string());
+            assert!(zip_err.to_string().contains("permission denied"));
+        }
+
+        #[test]
+        fn validation_variant_preserves_original_message() {
+            let zip_err = ZipError::Validation("too many files".to_string());
+            assert!(zip_err.to_string().contains("too many files"));
+        }
+
+        #[test]
+        fn zip_error_implements_std_error_trait() {
+            // ZipError が Box<dyn std::error::Error> に変換可能であることを確認
+            let zip_err = ZipError::Archive("test error".to_string());
+            let boxed: Box<dyn std::error::Error> = Box::new(zip_err);
+            assert!(boxed.to_string().contains("test error"));
+        }
     }
 
-    #[test]
-    fn strip_prefix_error_converts_from_std() {
-        use std::path::Path;
-        // strip_prefix で実際にエラーを生成
-        let err = Path::new("a/b").strip_prefix("c").unwrap_err();
-        let zip_err: ZipError = err.into();
+    /// Display フォーマットの仕様
+    mod display {
+        use super::super::*;
 
-        assert!(matches!(zip_err, ZipError::StripPrefix(_)));
-        assert!(zip_err.to_string().contains("Path error"));
-    }
+        #[test]
+        fn prefixes_each_variant_correctly() {
+            let cases = vec![
+                (ZipError::Io(io::Error::other("test")), "IO error: test"),
+                (
+                    ZipError::Archive("archive msg".to_string()),
+                    "Archive error: archive msg",
+                ),
+                (
+                    ZipError::Walk("walk msg".to_string()),
+                    "Walk error: walk msg",
+                ),
+                (
+                    ZipError::Validation("validation msg".to_string()),
+                    "Validation error: validation msg",
+                ),
+            ];
 
-    #[test]
-    fn archive_error_preserves_message() {
-        let zip_err = ZipError::Archive("corrupted archive".to_string());
-        assert!(zip_err.to_string().contains("corrupted archive"));
-    }
-
-    #[test]
-    fn walk_error_preserves_message() {
-        let zip_err = ZipError::Walk("permission denied".to_string());
-        assert!(zip_err.to_string().contains("permission denied"));
-    }
-
-    #[test]
-    fn validation_error_preserves_message() {
-        let zip_err = ZipError::Validation("too many files".to_string());
-        assert!(zip_err.to_string().contains("too many files"));
-    }
-
-    #[test]
-    fn display_format_matches_each_variant() {
-        let cases = vec![
-            (ZipError::Io(io::Error::other("test")), "IO error: test"),
-            (
-                ZipError::Archive("archive msg".to_string()),
-                "Archive error: archive msg",
-            ),
-            (
-                ZipError::Walk("walk msg".to_string()),
-                "Walk error: walk msg",
-            ),
-            (
-                ZipError::Validation("validation msg".to_string()),
-                "Validation error: validation msg",
-            ),
-        ];
-
-        for (err, expected) in cases {
-            assert_eq!(err.to_string(), expected);
+            for (err, expected) in cases {
+                assert_eq!(err.to_string(), expected);
+            }
         }
     }
 }

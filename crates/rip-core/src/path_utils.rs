@@ -48,105 +48,113 @@ pub fn get_zip_path(source_dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
-    // --- sanitize_filename ---
+    mod sanitize_filename {
+        use super::*;
 
-    #[test]
-    fn sanitize_filename_replaces_dangerous_characters() {
-        assert_eq!(sanitize_filename("file\\name"), "file_name");
-        assert_eq!(sanitize_filename("file/name"), "file_name");
-        assert_eq!(sanitize_filename("file:name"), "file_name");
-        assert_eq!(sanitize_filename("file*name"), "file_name");
-        assert_eq!(sanitize_filename("file?name"), "file_name");
-        assert_eq!(sanitize_filename("file\"name"), "file_name");
-        assert_eq!(sanitize_filename("file<name"), "file_name");
-        assert_eq!(sanitize_filename("file>name"), "file_name");
-        assert_eq!(sanitize_filename("file|name"), "file_name");
-        assert_eq!(sanitize_filename("file\0name"), "file_name");
+        #[test]
+        fn replaces_each_dangerous_character_with_underscore() {
+            // 各危険文字が個別にアンダースコアへ置換されることを検証
+            assert_eq!(sanitize_filename("file\\name"), "file_name");
+            assert_eq!(sanitize_filename("file/name"), "file_name");
+            assert_eq!(sanitize_filename("file:name"), "file_name");
+            assert_eq!(sanitize_filename("file*name"), "file_name");
+            assert_eq!(sanitize_filename("file?name"), "file_name");
+            assert_eq!(sanitize_filename("file\"name"), "file_name");
+            assert_eq!(sanitize_filename("file<name"), "file_name");
+            assert_eq!(sanitize_filename("file>name"), "file_name");
+            assert_eq!(sanitize_filename("file|name"), "file_name");
+            assert_eq!(sanitize_filename("file\0name"), "file_name");
+        }
+
+        #[test]
+        fn replaces_control_characters_with_underscore() {
+            // ASCII制御文字がアンダースコアへ置換されることを検証
+            assert_eq!(sanitize_filename("file\x01name"), "file_name");
+            assert_eq!(sanitize_filename("file\x1fname"), "file_name");
+        }
+
+        #[test]
+        fn preserves_normal_and_unicode_characters() {
+            // 通常のASCII文字およびUnicode文字はそのまま保持される
+            assert_eq!(sanitize_filename("normal_file.txt"), "normal_file.txt");
+            assert_eq!(sanitize_filename("日本語ファイル"), "日本語ファイル");
+            assert_eq!(sanitize_filename("file-name.rs"), "file-name.rs");
+        }
+
+        #[test]
+        fn returns_empty_string_for_empty_input() {
+            assert_eq!(sanitize_filename(""), "");
+        }
+
+        #[test]
+        fn replaces_multiple_dangerous_chars_independently() {
+            // 複数の危険文字が混在する場合、それぞれ独立に置換される
+            assert_eq!(sanitize_filename("a\\b/c:d"), "a_b_c_d");
+        }
     }
 
-    #[test]
-    fn sanitize_filename_replaces_control_characters() {
-        assert_eq!(sanitize_filename("file\x01name"), "file_name");
-        assert_eq!(sanitize_filename("file\x1fname"), "file_name");
-    }
+    mod get_zip_path {
+        use super::*;
 
-    #[test]
-    fn sanitize_filename_preserves_normal_characters() {
-        assert_eq!(sanitize_filename("normal_file.txt"), "normal_file.txt");
-        assert_eq!(sanitize_filename("日本語ファイル"), "日本語ファイル");
-        assert_eq!(sanitize_filename("file-name.rs"), "file-name.rs");
-    }
+        #[test]
+        fn appends_zip_extension_to_directory_name() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let source = dir.path().join("my_project");
+            std::fs::create_dir(&source).unwrap();
 
-    #[test]
-    fn sanitize_filename_handles_empty_string() {
-        assert_eq!(sanitize_filename(""), "");
-    }
+            let result = get_zip_path(&source);
+            assert_eq!(
+                result.file_name().unwrap().to_str().unwrap(),
+                "my_project.zip"
+            );
+        }
 
-    #[test]
-    fn sanitize_filename_replaces_multiple_dangerous_chars() {
-        assert_eq!(sanitize_filename("a\\b/c:d"), "a_b_c_d");
-    }
+        #[test]
+        fn appends_counter_1_when_zip_already_exists() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let source = dir.path().join("project");
+            std::fs::create_dir(&source).unwrap();
 
-    // --- get_zip_path ---
+            // 既存のZIPファイルを作成
+            let existing_zip = dir.path().join("project.zip");
+            std::fs::write(&existing_zip, "dummy").unwrap();
 
-    #[test]
-    fn get_zip_path_creates_zip_extension() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let source = dir.path().join("my_project");
-        std::fs::create_dir(&source).unwrap();
+            let result = get_zip_path(&source);
+            assert_eq!(
+                result.file_name().unwrap().to_str().unwrap(),
+                "project (1).zip"
+            );
+        }
 
-        let result = get_zip_path(&source);
-        assert_eq!(
-            result.file_name().unwrap().to_str().unwrap(),
-            "my_project.zip"
-        );
-    }
+        #[test]
+        fn increments_counter_for_multiple_existing_zips() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let source = dir.path().join("docs");
+            std::fs::create_dir(&source).unwrap();
 
-    #[test]
-    fn get_zip_path_adds_counter_for_existing_zip() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let source = dir.path().join("project");
-        std::fs::create_dir(&source).unwrap();
+            std::fs::write(dir.path().join("docs.zip"), "dummy").unwrap();
+            std::fs::write(dir.path().join("docs (1).zip"), "dummy").unwrap();
 
-        // 既存のZIPファイルを作成
-        let existing_zip = dir.path().join("project.zip");
-        std::fs::write(&existing_zip, "dummy").unwrap();
+            let result = get_zip_path(&source);
+            assert_eq!(
+                result.file_name().unwrap().to_str().unwrap(),
+                "docs (2).zip"
+            );
+        }
 
-        let result = get_zip_path(&source);
-        assert_eq!(
-            result.file_name().unwrap().to_str().unwrap(),
-            "project (1).zip"
-        );
-    }
+        #[test]
+        #[cfg(unix)]
+        fn sanitizes_dangerous_chars_in_directory_name() {
+            // Windowsでは `:` がファイル名に使えないためUnix限定
+            let dir = tempfile::TempDir::new().unwrap();
+            let source = dir.path().join("my:project");
+            std::fs::create_dir(&source).unwrap();
 
-    #[test]
-    fn get_zip_path_increments_counter_for_multiple_existing() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let source = dir.path().join("docs");
-        std::fs::create_dir(&source).unwrap();
-
-        std::fs::write(dir.path().join("docs.zip"), "dummy").unwrap();
-        std::fs::write(dir.path().join("docs (1).zip"), "dummy").unwrap();
-
-        let result = get_zip_path(&source);
-        assert_eq!(
-            result.file_name().unwrap().to_str().unwrap(),
-            "docs (2).zip"
-        );
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn get_zip_path_sanitizes_directory_name() {
-        // Windowsでは `:` がファイル名に使えないためUnix限定
-        let dir = tempfile::TempDir::new().unwrap();
-        let source = dir.path().join("my:project");
-        std::fs::create_dir(&source).unwrap();
-
-        let result = get_zip_path(&source);
-        assert_eq!(
-            result.file_name().unwrap().to_str().unwrap(),
-            "my_project.zip"
-        );
+            let result = get_zip_path(&source);
+            assert_eq!(
+                result.file_name().unwrap().to_str().unwrap(),
+                "my_project.zip"
+            );
+        }
     }
 }
