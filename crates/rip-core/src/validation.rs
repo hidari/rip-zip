@@ -4,7 +4,7 @@ use crate::config::{MAX_FILENAME_LENGTH, MAX_FILE_COUNT, MAX_FILE_SIZE, MAX_TOTA
 use crate::error::ZipError;
 
 /// ソースディレクトリの存在とディレクトリであることを検証する
-pub fn validate_source_dir(source_dir: &Path) -> Result<(), ZipError> {
+pub(crate) fn validate_source_dir(source_dir: &Path) -> Result<(), ZipError> {
     if !source_dir.exists() {
         return Err(ZipError::Validation(format!(
             "Source directory does not exist: {}",
@@ -26,7 +26,7 @@ pub fn validate_source_dir(source_dir: &Path) -> Result<(), ZipError> {
 ///
 /// 相対パスに`..`（ParentDir）コンポーネントが含まれている場合、
 /// ZIPスリップ攻撃の可能性があるためtrueを返す。
-pub fn has_path_traversal(relative_path: &Path) -> bool {
+pub(crate) fn has_path_traversal(relative_path: &Path) -> bool {
     relative_path
         .components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -36,7 +36,7 @@ pub fn has_path_traversal(relative_path: &Path) -> bool {
 ///
 /// ZIP仕様ではパス区切り文字は`/`でなければならない。
 /// Windowsの`\`を`/`に変換する。
-pub fn normalize_path_separator(relative_path: &Path) -> String {
+pub(crate) fn normalize_path_separator(relative_path: &Path) -> String {
     match relative_path.to_str() {
         Some(s) => s.replace('\\', "/"),
         None => relative_path.to_string_lossy().replace('\\', "/"),
@@ -44,12 +44,12 @@ pub fn normalize_path_separator(relative_path: &Path) -> String {
 }
 
 /// ファイル名がZIP仕様の最大長を超えているかチェックする
-pub fn is_filename_too_long(name: &str) -> bool {
+pub(crate) fn is_filename_too_long(name: &str) -> bool {
     name.len() > MAX_FILENAME_LENGTH
 }
 
 /// ファイル数が制限を超えていないかチェックする
-pub fn check_file_count(count: usize) -> Result<(), ZipError> {
+pub(crate) fn check_file_count(count: usize) -> Result<(), ZipError> {
     if count > MAX_FILE_COUNT {
         return Err(ZipError::Validation(format!(
             "Too many files (limit: {})",
@@ -63,14 +63,14 @@ pub fn check_file_count(count: usize) -> Result<(), ZipError> {
 ///
 /// ZIP64が有効な場合はサイズ制限を適用しない。
 /// trueを返した場合、呼び出し元はこのファイルをスキップすべき。
-pub fn should_skip_large_file(file_size: u64, use_zip64: bool) -> bool {
+pub(crate) fn should_skip_large_file(file_size: u64, use_zip64: bool) -> bool {
     file_size > MAX_FILE_SIZE && !use_zip64
 }
 
 /// 合計サイズが制限を超えていないかチェックする
 ///
 /// ZIP64が有効な場合はサイズ制限を適用しない。
-pub fn check_total_size(
+pub(crate) fn check_total_size(
     current_total: u64,
     addition: u64,
     use_zip64: bool,
