@@ -9,11 +9,11 @@ license = "MIT"
 repository = "https://github.com/hidari/rip-zip"
 
 [workspace.dependencies]
-tempfile = "3.14.0"
-zip = "2.2.2"
-walkdir = "2.5.0"
-clap = { version = "4.5.23", features = ["derive"] }
-is-terminal = "0.4"
+tempfile = "=3.14.0"
+zip = "=8.4.0"
+walkdir = "=2.5.0"
+clap = { version = "=4.5.23", features = ["derive"] }
+is-terminal = "=0.4.17"
 
 [profile.release]
 opt-level = 3

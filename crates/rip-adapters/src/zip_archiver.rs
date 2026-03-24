@@ -217,4 +217,106 @@ mod tests {
         let archive = zip::ZipArchive::new(file).unwrap();
         assert_eq!(archive.len(), 2);
     }
+
+    // --- zip crate API契約テスト ---
+    // zip crateが提供するAPIの存在と基本的な挙動を検証する。
+    // バージョンアップ時にAPI互換性を自動で検出するためのテスト群。
+
+    mod zip_crate_contract {
+        use std::fs::File;
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        #[test]
+        fn simple_file_options_default_with_deflate_compression() {
+            // SimpleFileOptionsがdefault()を提供し、Deflate圧縮を設定できること
+            let _options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        }
+
+        #[test]
+        fn simple_file_options_supports_large_file() {
+            // large_file()メソッドが存在し、チェーン呼び出しできること
+            let _options = SimpleFileOptions::default().large_file(true);
+            let _options = SimpleFileOptions::default().large_file(false);
+        }
+
+        #[test]
+        fn simple_file_options_supports_unix_permissions() {
+            // unix_permissions()メソッドが存在し、チェーン呼び出しできること
+            let _options = SimpleFileOptions::default().unix_permissions(0o755);
+        }
+
+        #[test]
+        fn zip_writer_lifecycle_new_start_file_write_finish() {
+            // ZipWriter: new → start_file → write → finish のライフサイクルが動作すること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("contract.zip");
+            let zip_file = File::create(&zip_path).unwrap();
+
+            let mut writer = ZipWriter::new(zip_file);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+            writer.start_file("test.txt", options).unwrap();
+            writer.write_all(b"contract test").unwrap();
+            writer.finish().unwrap();
+
+            // 書き込んだファイルが読み取り可能であること
+            let file = File::open(&zip_path).unwrap();
+            let archive = zip::ZipArchive::new(file).unwrap();
+            assert_eq!(archive.len(), 1);
+        }
+
+        #[test]
+        fn zip_archive_by_name_returns_entry() {
+            // ZipArchive::by_name()でエントリを名前から取得できること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("contract.zip");
+            let zip_file = File::create(&zip_path).unwrap();
+
+            let mut writer = ZipWriter::new(zip_file);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            writer.start_file("lookup.txt", options).unwrap();
+            writer.write_all(b"data").unwrap();
+            writer.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = zip::ZipArchive::new(file).unwrap();
+            let entry = archive.by_name("lookup.txt").unwrap();
+            assert_eq!(entry.name(), "lookup.txt");
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn zip_archive_entry_unix_mode() {
+            // unix_mode()でパーミッション情報を取得できること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("contract.zip");
+            let zip_file = File::create(&zip_path).unwrap();
+
+            let mut writer = ZipWriter::new(zip_file);
+            let options = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .unix_permissions(0o755);
+            writer.start_file("exec.sh", options).unwrap();
+            writer.write_all(b"#!/bin/bash").unwrap();
+            writer.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = zip::ZipArchive::new(file).unwrap();
+            let entry = archive.by_name("exec.sh").unwrap();
+            assert_eq!(entry.unix_mode().unwrap() & 0o777, 0o755);
+        }
+
+        #[test]
+        fn zip_error_file_not_found_variant_exists() {
+            // ZipError::FileNotFound バリアントが存在し、Displayを持つこと
+            let err = zip::result::ZipError::FileNotFound;
+            let msg = err.to_string();
+            assert!(!msg.is_empty());
+        }
+    }
 }
