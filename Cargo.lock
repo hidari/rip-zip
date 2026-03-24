@@ -567,6 +567,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rip-adapters"
+version = "0.3.0"
+dependencies = [
+ "is-terminal",
+ "rip-core",
+ "tempfile",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
 name = "rip-core"
 version = "0.3.0"
 dependencies = [
