@@ -26,7 +26,7 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Enable ZIP64 support for large files (>4GB)
+    /// Allow large files by lifting size restrictions (>1GB per file, >4GB total)
     #[arg(long)]
     zip64: bool,
 }

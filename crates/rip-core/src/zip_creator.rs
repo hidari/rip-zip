@@ -23,7 +23,7 @@ pub fn create_zip(
         target: target_zip.to_path_buf(),
     });
 
-    archiver.create(target_zip, use_zip64)?;
+    archiver.create(target_zip)?;
 
     let mut stats = ZipStats::default();
 
@@ -147,7 +147,7 @@ mod tests {
     }
 
     impl ZipArchiver for FakeArchiver {
-        fn create(&mut self, _target: &Path, _zip64: bool) -> Result<(), ZipError> {
+        fn create(&mut self, _target: &Path) -> Result<(), ZipError> {
             self.created = true;
             Ok(())
         }
