@@ -45,6 +45,8 @@ impl fmt::Display for ZipError {
     }
 }
 
+impl std::error::Error for ZipError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
