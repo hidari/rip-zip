@@ -1,31 +1,22 @@
 [workspace]
-members = ["crates/xtask"]
+members = ["crates/xtask", "crates/rip-core", "crates/rip-adapters", "crates/rip-cli"]
+resolver = "2"
 
-[package]
-name = "rip-zip"
-version = "0.3.0"
+[workspace.package]
 edition = "2021"
 authors = ["Hidari <ika5140+github@gmail.com>"]
-description = "Handling cross-platform ZIP archives that just work everywhere."
-repository = "https://github.com/hidari/rip-zip"
 license = "MIT"
-readme = "README.md"
-keywords = ["zip", "compression", "cli", "cross-platform", "encoding"]
-categories = ["command-line-utilities", "compression", "filesystem"]
+repository = "https://github.com/hidari/rip-zip"
 
-[dependencies]
+[workspace.dependencies]
+tempfile = "3.14.0"
 zip = "2.2.2"
 walkdir = "2.5.0"
 clap = { version = "4.5.23", features = ["derive"] }
 is-terminal = "0.4"
-tempfile = "3.14.0"
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
-
-[[bin]]
-name = "rip"
-path = "src/main.rs"

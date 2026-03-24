@@ -567,13 +567,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "rip-adapters"
+version = "0.3.0"
+dependencies = [
+ "is-terminal",
+ "rip-core",
+ "tempfile",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
+name = "rip-core"
+version = "0.3.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "rip-zip"
 version = "0.3.0"
 dependencies = [
  "clap",
- "is-terminal",
+ "rip-adapters",
+ "rip-core",
  "tempfile",
- "walkdir",
  "zip",
 ]
 

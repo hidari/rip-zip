@@ -1,0 +1,8 @@
+[package]
+name = "rip-core"
+version = "0.3.0"
+edition.workspace = true
+publish = false
+
+[dev-dependencies]
+tempfile.workspace = true

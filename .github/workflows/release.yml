@@ -71,20 +71,23 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Update version in Cargo.toml
-        run: sed -i "s/^version = \".*\"/version = \"${{ steps.version.outputs.VERSION }}\"/" Cargo.toml
+        run: |
+          for toml in crates/rip-core/Cargo.toml crates/rip-adapters/Cargo.toml crates/rip-cli/Cargo.toml; do
+            sed -i "s/^version = \".*\"/version = \"${{ steps.version.outputs.VERSION }}\"/" "$toml"
+          done
 
       - name: Commit version update
         run: |
           git config user.name "GitHub Actions"
           git config user.email "github-actions@github.com"
-          git diff --quiet Cargo.toml || (
-            git add Cargo.toml
+          git diff --quiet crates/*/Cargo.toml || (
+            git add crates/*/Cargo.toml
             git commit -m "chore: bump version to ${{ steps.version.outputs.VERSION }}"
             git push origin HEAD:${{ github.event.repository.default_branch }}
           )
 
       - name: Publish to crates.io
-        run: cargo publish --allow-dirty
+        run: cargo publish -p rip-zip --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
