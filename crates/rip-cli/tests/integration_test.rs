@@ -241,6 +241,34 @@ mod internationalization {
 mod zip64 {
     use super::*;
     use rip_core::path_utils::get_zip_path;
+    use zip::ZipArchive;
+
+    #[test]
+    fn small_files_are_archived_with_and_without_zip64() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = TempDir::new()?;
+        let test_dir = temp_dir.path().join("size_test");
+        fs::create_dir(&test_dir)?;
+
+        fs::write(test_dir.join("small.txt"), "small content")?;
+
+        // ZIP64なしで作成
+        let zip_path = temp_dir.path().join("test_no_zip64.zip");
+        create_zip_with_adapters(&test_dir, &zip_path, false)?;
+
+        let zip_file = File::open(&zip_path)?;
+        let archive = ZipArchive::new(zip_file)?;
+        assert_eq!(archive.len(), 1);
+
+        // ZIP64ありで作成
+        let zip_path_64 = temp_dir.path().join("test_with_zip64.zip");
+        create_zip_with_adapters(&test_dir, &zip_path_64, true)?;
+
+        let zip_file_64 = File::open(&zip_path_64)?;
+        let archive_64 = ZipArchive::new(zip_file_64)?;
+        assert_eq!(archive_64.len(), 1);
+
+        Ok(())
+    }
 
     #[test]
     fn zip64_flag_creates_valid_archive() {
@@ -282,33 +310,6 @@ mod security {
             assert!(!name.contains(".."), "Path traversal detected: {}", name);
             assert!(!name.starts_with('/'), "Absolute path detected: {}", name);
         }
-
-        Ok(())
-    }
-
-    #[test]
-    fn small_files_are_archived_with_and_without_zip64() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = TempDir::new()?;
-        let test_dir = temp_dir.path().join("size_test");
-        fs::create_dir(&test_dir)?;
-
-        fs::write(test_dir.join("small.txt"), "small content")?;
-
-        // ZIP64なしで作成
-        let zip_path = temp_dir.path().join("test_no_zip64.zip");
-        create_zip_with_adapters(&test_dir, &zip_path, false)?;
-
-        let zip_file = File::open(&zip_path)?;
-        let archive = ZipArchive::new(zip_file)?;
-        assert_eq!(archive.len(), 1);
-
-        // ZIP64ありで作成
-        let zip_path_64 = temp_dir.path().join("test_with_zip64.zip");
-        create_zip_with_adapters(&test_dir, &zip_path_64, true)?;
-
-        let zip_file_64 = File::open(&zip_path_64)?;
-        let archive_64 = ZipArchive::new(zip_file_64)?;
-        assert_eq!(archive_64.len(), 1);
 
         Ok(())
     }
@@ -780,21 +781,21 @@ mod slow_tests {
             fs::create_dir(&current_dir)?;
         }
 
-        // レベル50: 範囲内
+        // depth 51（test_dir + 50段のサブディレクトリ）: MAX_WALK_DEPTH=100の範囲内
         let mut level_50 = test_dir.clone();
         for i in 0..50 {
             level_50 = level_50.join(format!("d{}", i));
         }
         fs::write(level_50.join("file_level50.txt"), "level 50")?;
 
-        // レベル99: 境界
+        // depth 100（test_dir + 99段のサブディレクトリ）: MAX_WALK_DEPTH=100の境界
         let mut level_99 = test_dir.clone();
         for i in 0..99 {
             level_99 = level_99.join(format!("d{}", i));
         }
         fs::write(level_99.join("file_level99.txt"), "level 99")?;
 
-        // レベル100: 超過
+        // depth 101（test_dir + 100段のサブディレクトリ）: MAX_WALK_DEPTH=100を超過
         let mut level_100 = test_dir.clone();
         for i in 0..100 {
             level_100 = level_100.join(format!("d{}", i));

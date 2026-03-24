@@ -212,10 +212,9 @@ mod tests {
             assert!(!is_filename_too_long(&name_within));
 
             // 1文字追加するとバイト長が超過する場合を確認
+            // chars_over_limit * 3 > MAX_FILENAME_LENGTH となる
             let chars_over_limit = (MAX_FILENAME_LENGTH / 3) + 1;
             let name_over = "あ".repeat(chars_over_limit);
-            // バイト長がMAX_FILENAME_LENGTHを超えることを確認
-            assert!(name_over.len() > MAX_FILENAME_LENGTH);
             assert!(is_filename_too_long(&name_over));
         }
     }
@@ -226,6 +225,11 @@ mod tests {
         #[test]
         fn accepts_count_within_limit() {
             assert!(check_file_count(1).is_ok());
+        }
+
+        #[test]
+        fn accepts_exactly_100000_files() {
+            // 境界値ちょうどMAX_FILE_COUNTは許可される
             assert!(check_file_count(MAX_FILE_COUNT).is_ok());
         }
 
@@ -235,12 +239,6 @@ mod tests {
             assert!(
                 matches!(result, Err(ZipError::Validation(msg)) if msg.contains("Too many files"))
             );
-        }
-
-        #[test]
-        fn accepts_exactly_100000_files() {
-            // 境界値ちょうどMAX_FILE_COUNTは許可される
-            assert!(check_file_count(MAX_FILE_COUNT).is_ok());
         }
     }
 
