@@ -1,0 +1,8 @@
+[package]
+name = "rip-core"
+version = "0.3.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+tempfile = "3.14.0"

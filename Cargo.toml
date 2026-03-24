@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/xtask"]
+members = ["crates/xtask", "crates/rip-core"]
 
 [package]
 name = "rip-zip"
