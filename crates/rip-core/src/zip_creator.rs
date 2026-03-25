@@ -473,8 +473,8 @@ mod tests {
             let source = dir.path().join("src");
             std::fs::create_dir(&source).unwrap();
 
-            // 65530バイトのファイル名 + 不可視文字(5文字 x 3バイト = 15バイト)を注入
-            // サニタイズ前: 65545バイト（制限超過）、サニタイズ後: 65530バイト（制限内）
+            // 65530バイトのベースファイル名 + 不可視文字5文字（各3バイト = 合計15バイト）を注入
+            // 生パス: 65545バイト、サニタイズ後: 65530バイト（65535バイト制限内）→ 追加される
             let base_name = "a".repeat(65530);
             let name_with_invisible =
                 format!("{}\u{200B}\u{200B}\u{200B}\u{200B}\u{200B}", base_name);

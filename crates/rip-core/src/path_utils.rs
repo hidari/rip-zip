@@ -811,8 +811,14 @@ mod tests {
             #[test]
             fn sanitizes_bidi_chars_combined_with_reserved_name_in_path() {
                 // パスセグメント内でbidi制御文字とWindows予約名が複合するケース
+                // プレフィックス型: bidi文字が予約名の前に付加される
                 assert_eq!(
                     sanitize_zip_entry_path("\u{200E}CON/\u{202E}NUL.txt"),
+                    "CON_/NUL_.txt"
+                );
+                // 埋め込み型: bidi文字が予約名の内部に注入される
+                assert_eq!(
+                    sanitize_zip_entry_path("C\u{200E}ON/N\u{202E}UL.txt"),
                     "CON_/NUL_.txt"
                 );
             }
