@@ -48,15 +48,14 @@ fn is_windows_reserved_name(name: &str) -> bool {
     )
 }
 
-/// ファイル名から危険な文字を安全な文字に置換する
+/// ファイル名サニタイズのコアロジック（フォールバックなし）
 ///
-/// ZIPファイル名として安全な文字列を生成する。以下の処理を順に適用する:
+/// 以下の処理を順に適用し、空文字列になった場合はNoneを返す:
 /// 1. 不可視Unicode文字（零幅文字、BOM、双方向制御文字）を除去
 /// 2. 危険文字・制御文字をアンダースコアに置換
 /// 3. 末尾のドット・スペースを除去（Windows互換）
 /// 4. Windows予約デバイス名をエスケープ
-/// 5. 空文字列になった場合のフォールバック
-pub fn sanitize_filename(name: &str) -> String {
+fn sanitize_filename_core(name: &str) -> Option<String> {
     // 1-2. 不可視Unicode文字を除去し、危険文字・制御文字をアンダースコアに置換
     let sanitized: String = name
         .chars()
@@ -84,11 +83,39 @@ pub fn sanitize_filename(name: &str) -> String {
         trimmed.to_string()
     };
 
-    // 5. サニタイズ後に空になった場合のフォールバック
     if result.is_empty() {
-        "archive".to_string()
+        None
     } else {
-        result
+        Some(result)
+    }
+}
+
+/// ファイル名から危険な文字を安全な文字に置換する
+///
+/// ZIPファイル名として安全な文字列を生成する。
+/// サニタイズ後に空になった場合は "archive" にフォールバックする。
+pub fn sanitize_filename(name: &str) -> String {
+    sanitize_filename_core(name).unwrap_or_else(|| "archive".to_string())
+}
+
+/// ZIPエントリパスの各セグメントをサニタイズする
+///
+/// バックスラッシュをフォワードスラッシュに正規化した後、
+/// パスを `/` で分割し、各セグメントに `sanitize_filename_core` を適用後、
+/// `/` で再結合する。空セグメント（連続スラッシュ）は除去する。
+/// サニタイズ後に空になったセグメントは `_` に置換する。
+pub fn sanitize_zip_entry_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let segments: Vec<String> = normalized
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|segment| sanitize_filename_core(segment).unwrap_or_else(|| "_".to_string()))
+        .collect();
+
+    if segments.is_empty() {
+        "_".to_string()
+    } else {
+        segments.join("/")
     }
 }
 
@@ -547,6 +574,171 @@ mod tests {
                 result.file_name().unwrap().to_str().unwrap(),
                 "my_project.zip"
             );
+        }
+    }
+
+    /// sanitize_zip_entry_path の仕様
+    mod sanitize_zip_entry_path {
+        use super::*;
+
+        /// 基本動作の仕様
+        mod basic_behavior {
+            use super::*;
+
+            #[test]
+            fn sanitizes_each_segment_independently() {
+                // 各パスセグメントが個別にサニタイズされる
+                assert_eq!(
+                    sanitize_zip_entry_path("dir/file:name.txt"),
+                    "dir/file_name.txt"
+                );
+            }
+
+            #[test]
+            fn preserves_already_safe_path() {
+                // 安全なパスは変更されない
+                assert_eq!(
+                    sanitize_zip_entry_path("dir/sub/file.txt"),
+                    "dir/sub/file.txt"
+                );
+            }
+
+            #[test]
+            fn handles_single_segment_path() {
+                // 単一セグメントのパスはそのまま処理される
+                assert_eq!(sanitize_zip_entry_path("file.txt"), "file.txt");
+            }
+        }
+
+        /// 空セグメント除去の仕様
+        mod empty_segment_removal {
+            use super::*;
+
+            #[test]
+            fn removes_empty_segments_from_consecutive_slashes() {
+                // 連続スラッシュは正規化される
+                assert_eq!(sanitize_zip_entry_path("dir//file.txt"), "dir/file.txt");
+            }
+
+            #[test]
+            fn removes_leading_slash() {
+                // 先頭スラッシュは除去される
+                assert_eq!(sanitize_zip_entry_path("/dir/file.txt"), "dir/file.txt");
+            }
+
+            #[test]
+            fn removes_trailing_slash() {
+                // 末尾スラッシュは除去される
+                assert_eq!(sanitize_zip_entry_path("dir/file.txt/"), "dir/file.txt");
+            }
+        }
+
+        /// サニタイズ後の空セグメントフォールバックの仕様
+        mod fallback_behavior {
+            use super::*;
+
+            #[test]
+            fn replaces_invisible_only_segment_with_underscore() {
+                // 不可視文字のみのセグメントは "_" にフォールバック
+                assert_eq!(
+                    sanitize_zip_entry_path("dir/\u{200B}/file.txt"),
+                    "dir/_/file.txt"
+                );
+            }
+
+            #[test]
+            fn replaces_dots_only_segment_with_underscore() {
+                // ドットのみのセグメントはトリミングで空になり "_" にフォールバック
+                assert_eq!(
+                    sanitize_zip_entry_path("dir/.../file.txt"),
+                    "dir/_/file.txt"
+                );
+            }
+
+            #[test]
+            fn returns_underscore_for_all_empty_segments() {
+                // 全セグメントが空の場合 "_" にフォールバック
+                assert_eq!(sanitize_zip_entry_path("///"), "_");
+            }
+
+            #[test]
+            fn returns_underscore_for_empty_string() {
+                // 空文字列は "_" にフォールバック
+                assert_eq!(sanitize_zip_entry_path(""), "_");
+            }
+
+            #[test]
+            fn replaces_single_dot_segment_with_underscore() {
+                // "." はトリミングで空になり "_" にフォールバック
+                assert_eq!(sanitize_zip_entry_path("."), "_");
+            }
+
+            #[test]
+            fn replaces_double_dot_segment_with_underscore() {
+                // ".." はトリミングで空になり "_" にフォールバック
+                assert_eq!(sanitize_zip_entry_path(".."), "_");
+            }
+        }
+
+        /// セキュリティ関連の仕様
+        mod security {
+            use super::*;
+
+            #[test]
+            fn sanitizes_windows_reserved_names_in_segments() {
+                // Windows予約名はセグメント単位でサニタイズされる
+                assert_eq!(sanitize_zip_entry_path("CON/file.txt"), "CON_/file.txt");
+            }
+
+            #[test]
+            fn strips_invisible_unicode_from_segments() {
+                // 不可視Unicode文字はセグメントから除去される
+                assert_eq!(
+                    sanitize_zip_entry_path("dir/fi\u{200B}le.txt"),
+                    "dir/file.txt"
+                );
+            }
+
+            #[test]
+            fn sanitizes_dangerous_chars_in_segments() {
+                // 危険文字はセグメント単位で置換される
+                assert_eq!(
+                    sanitize_zip_entry_path("my:dir/file*name.txt"),
+                    "my_dir/file_name.txt"
+                );
+            }
+
+            #[test]
+            fn strips_bidi_control_chars_from_segments() {
+                // RTL制御文字はセグメントから除去される
+                assert_eq!(
+                    sanitize_zip_entry_path("dir/\u{202E}evil.txt"),
+                    "dir/evil.txt"
+                );
+            }
+
+            #[test]
+            fn normalizes_backslashes_as_path_separators() {
+                // バックスラッシュはフォワードスラッシュに正規化される
+                assert_eq!(
+                    sanitize_zip_entry_path("dir\\sub\\file.txt"),
+                    "dir/sub/file.txt"
+                );
+            }
+        }
+
+        /// "archive" セグメントの区別の仕様
+        mod archive_segment {
+            use super::*;
+
+            #[test]
+            fn preserves_literal_archive_segment() {
+                // 元が "archive" というセグメントはそのまま保持される
+                assert_eq!(
+                    sanitize_zip_entry_path("archive/file.txt"),
+                    "archive/file.txt"
+                );
+            }
         }
     }
 }

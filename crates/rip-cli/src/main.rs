@@ -114,6 +114,15 @@ fn handle_event(event: ZipEvent, verbose: bool) {
                 );
             }
         }
+        ZipEvent::PathSanitized {
+            original,
+            sanitized,
+        } => {
+            eprintln!(
+                "Warning: Sanitized entry path: '{}' -> '{}'",
+                original, sanitized
+            );
+        }
     }
 }
 
