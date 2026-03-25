@@ -465,6 +465,76 @@ mod tests {
         }
 
         #[test]
+        fn sanitization_applied_before_length_check() {
+            // バリデーション順序の検証:
+            // サニタイズ後のパスがlength checkに渡されることを確認
+            // サニタイズで文字が減る場合（不可視文字除去）、長さ判定はサニタイズ後に行われる
+            let dir = tempfile::TempDir::new().unwrap();
+            let source = dir.path().join("src");
+            std::fs::create_dir(&source).unwrap();
+
+            // 65530バイトのベースファイル名 + 不可視文字5文字（各3バイト = 合計15バイト）を注入
+            // 生パス: 65545バイト、サニタイズ後: 65530バイト（65535バイト制限内）→ 追加される
+            let base_name = "a".repeat(65530);
+            let name_with_invisible =
+                format!("{}\u{200B}\u{200B}\u{200B}\u{200B}\u{200B}", base_name);
+            let walker = FakeWalker::new(vec![Ok(make_file_entry(&name_with_invisible, 50))]);
+            let mut archiver = FakeArchiver::new();
+
+            let stats = create_zip(
+                &walker,
+                &mut archiver,
+                &source,
+                &dir.path().join("out.zip"),
+                false,
+                &|_| {},
+            )
+            .unwrap();
+
+            // サニタイズ後は65530バイト（制限内）なので追加される
+            assert_eq!(stats.file_count, 1);
+            assert_eq!(archiver.added_files.len(), 1);
+        }
+
+        #[test]
+        fn traversal_check_runs_before_sanitization() {
+            // バリデーション順序の検証:
+            // パストラバーサルチェックはサニタイズ前に実行される
+            // "../etc/passwd" は traversal check でスキップされ、サニタイズには到達しない
+            let dir = tempfile::TempDir::new().unwrap();
+            let source = dir.path().join("src");
+            std::fs::create_dir(&source).unwrap();
+
+            let mut traversal_entry = make_file_entry("../etc/passwd", 100);
+            traversal_entry.relative_path = PathBuf::from("../etc/passwd");
+
+            let walker = FakeWalker::new(vec![Ok(traversal_entry)]);
+            let mut archiver = FakeArchiver::new();
+            let skipped_reasons: RefCell<Vec<FileSkipReason>> = RefCell::new(Vec::new());
+
+            create_zip(
+                &walker,
+                &mut archiver,
+                &source,
+                &dir.path().join("out.zip"),
+                false,
+                &|event| {
+                    if let ZipEvent::FileSkipped { reason, .. } = event {
+                        skipped_reasons.borrow_mut().push(reason);
+                    }
+                },
+            )
+            .unwrap();
+
+            // PathTraversalとしてスキップされる（サニタイズではなくトラバーサルチェックで検出）
+            let reasons = skipped_reasons.borrow();
+            assert_eq!(reasons.len(), 1);
+            assert_eq!(reasons[0], FileSkipReason::PathTraversal);
+            // archiverにはファイルが渡されていない
+            assert!(archiver.added_files.is_empty());
+        }
+
+        #[test]
         fn skips_filenames_exceeding_max_length() {
             let dir = tempfile::TempDir::new().unwrap();
             let source = dir.path().join("src");

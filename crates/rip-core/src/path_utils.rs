@@ -235,6 +235,28 @@ mod tests {
                     "caf\u{0065}\u{0301}"
                 );
             }
+
+            #[test]
+            fn preserves_fullwidth_latin_as_distinct_from_ascii() {
+                // フルワイド文字（U+FF21-FF3A等）はASCII文字とは別の文字として保持される
+                // Ｃ (U+FF23) はASCIIの C とは異なるためWindows予約名として検出されない
+                assert_eq!(sanitize_filename("\u{FF23}ON"), "\u{FF23}ON");
+                assert_eq!(
+                    sanitize_filename("\u{FF23}\u{FF2F}\u{FF2E}"),
+                    "\u{FF23}\u{FF2F}\u{FF2E}"
+                );
+            }
+
+            #[test]
+            fn preserves_nfc_and_nfd_forms_as_is() {
+                // NFC（合成済み）とNFD（分解済み）の両形式をそのまま保持する
+                // サニタイズはUnicode正規化を行わない（ファイルシステム依存の正規化に委ねる）
+                let nfc = "caf\u{00E9}"; // é as single codepoint
+                let nfd = "cafe\u{0301}"; // e + combining accent
+                assert_eq!(sanitize_filename(nfc), nfc);
+                assert_eq!(sanitize_filename(nfd), nfd);
+                assert_ne!(nfc, nfd); // 異なるバイト列であることの確認
+            }
         }
 
         /// ゼロ幅Unicode文字の除去仕様
@@ -381,6 +403,14 @@ mod tests {
                 assert_eq!(sanitize_filename("C\u{200B}ON"), "CON_");
                 assert_eq!(sanitize_filename("N\u{FEFF}UL.txt"), "NUL_.txt");
             }
+
+            #[test]
+            fn detects_reserved_name_with_bidi_control_chars() {
+                // 双方向制御文字を注入してWindows予約名チェックを回避しようとする攻撃を無効化
+                assert_eq!(sanitize_filename("\u{200E}CON"), "CON_");
+                assert_eq!(sanitize_filename("P\u{202A}RN"), "PRN_");
+                assert_eq!(sanitize_filename("\u{2066}AUX\u{2069}.txt"), "AUX_.txt");
+            }
         }
 
         /// ドット・スペースのトリム仕様（Windows互換）
@@ -501,6 +531,12 @@ mod tests {
                 // U+FFFD REPLACEMENT CHARACTER は通常文字として保持
                 let result = sanitize_filename("\u{FFFD}test");
                 assert_eq!(result, "\u{FFFD}test");
+            }
+
+            #[test]
+            fn null_byte_combined_with_dangerous_char() {
+                // ヌルバイトと危険文字の複合パターン
+                assert_eq!(sanitize_filename("file\0:name"), "file__name");
             }
 
             #[test]
@@ -737,6 +773,53 @@ mod tests {
                 assert_eq!(
                     sanitize_zip_entry_path("archive/file.txt"),
                     "archive/file.txt"
+                );
+            }
+        }
+
+        /// 複合攻撃パターンの仕様
+        mod combined_attacks {
+            use super::*;
+
+            #[test]
+            fn sanitizes_null_bytes_in_path_segments() {
+                // ヌルバイトを含むパスセグメントの各部分が正しく処理される
+                assert_eq!(
+                    sanitize_zip_entry_path("dir\0name/file.txt"),
+                    "dir_name/file.txt"
+                );
+            }
+
+            #[test]
+            fn sanitizes_multiple_reserved_name_segments() {
+                // 複数セグメントにWindows予約名が散在するケース
+                assert_eq!(
+                    sanitize_zip_entry_path("CON/PRN/file.txt"),
+                    "CON_/PRN_/file.txt"
+                );
+            }
+
+            #[test]
+            fn sanitizes_mixed_dangerous_chars_across_segments() {
+                // 各セグメントに異なる危険文字が含まれるケース
+                assert_eq!(
+                    sanitize_zip_entry_path("dir:1/dir*2/file?.txt"),
+                    "dir_1/dir_2/file_.txt"
+                );
+            }
+
+            #[test]
+            fn sanitizes_bidi_chars_combined_with_reserved_name_in_path() {
+                // パスセグメント内でbidi制御文字とWindows予約名が複合するケース
+                // プレフィックス型: bidi文字が予約名の前に付加される
+                assert_eq!(
+                    sanitize_zip_entry_path("\u{200E}CON/\u{202E}NUL.txt"),
+                    "CON_/NUL_.txt"
+                );
+                // 埋め込み型: bidi文字が予約名の内部に注入される
+                assert_eq!(
+                    sanitize_zip_entry_path("C\u{200E}ON/N\u{202E}UL.txt"),
+                    "CON_/NUL_.txt"
                 );
             }
         }

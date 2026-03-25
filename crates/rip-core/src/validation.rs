@@ -168,6 +168,15 @@ mod tests {
             // URLエンコードされた "/" (%2f) はリテラルなファイル名
             assert!(!has_path_traversal(Path::new("foo%2fbar")));
         }
+
+        #[test]
+        fn invisible_chars_in_dot_dot_do_not_create_traversal() {
+            // 不可視文字を含む ".." 風のセグメントはPathコンポーネントとして
+            // ParentDirにならないためトラバーサルとして検出されない
+            // （サニタイズは別レイヤーで処理される）
+            assert!(!has_path_traversal(Path::new(".\u{200B}./etc/passwd")));
+            assert!(!has_path_traversal(Path::new(".\u{FEFF}./etc/passwd")));
+        }
     }
 
     mod path_separator {
@@ -214,6 +223,15 @@ mod tests {
         fn returns_true_at_65536_bytes() {
             let name = "a".repeat(MAX_FILENAME_LENGTH + 1);
             assert!(is_filename_too_long(&name));
+        }
+
+        #[test]
+        fn returns_false_at_exact_limit_with_multibyte_chars() {
+            // マルチバイト文字でちょうど65535バイトになるケース
+            // "あ" は3バイト、65535 / 3 = 21845文字
+            let name = "あ".repeat(21845); // 21845 * 3 = 65535 bytes
+            assert_eq!(name.len(), MAX_FILENAME_LENGTH);
+            assert!(!is_filename_too_long(&name));
         }
 
         #[test]
