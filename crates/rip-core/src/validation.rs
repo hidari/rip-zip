@@ -151,6 +151,23 @@ mod tests {
             assert!(!has_path_traversal(Path::new("foo/..hidden/bar")));
             assert!(!has_path_traversal(Path::new("foo/.config/settings")));
         }
+
+        /// 設計判断の文書化: URLエンコードされたパスを復号しない
+        ///
+        /// 入力はファイルシステムからのパスであり、URLではない。
+        /// "%2e%2e" はリテラルなファイル名として扱い、トラバーサルとして検出しない。
+        #[test]
+        fn treats_percent_encoded_dots_as_literal_filename() {
+            // URLエンコードされた ".." (%2e%2e) はリテラルなファイル名
+            assert!(!has_path_traversal(Path::new("%2e%2e/etc/passwd")));
+            assert!(!has_path_traversal(Path::new("foo/%2e%2e/bar")));
+        }
+
+        #[test]
+        fn treats_percent_encoded_slash_as_literal_filename() {
+            // URLエンコードされた "/" (%2f) はリテラルなファイル名
+            assert!(!has_path_traversal(Path::new("foo%2fbar")));
+        }
     }
 
     mod path_separator {
