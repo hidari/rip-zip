@@ -83,6 +83,8 @@ pub enum ZipEvent {
     ArchiveStarted { target: PathBuf },
     /// アーカイブの作成が完了した
     ArchiveCompleted { stats: ZipStats },
+    /// ZIPエントリパスがサニタイズにより変更された
+    PathSanitized { original: String, sanitized: String },
 }
 
 #[cfg(test)]
@@ -235,6 +237,10 @@ mod tests {
             };
             let _ = ZipEvent::ArchiveCompleted {
                 stats: ZipStats::default(),
+            };
+            let _ = ZipEvent::PathSanitized {
+                original: "dir/\u{200B}file.txt".to_string(),
+                sanitized: "dir/file.txt".to_string(),
             };
         }
     }

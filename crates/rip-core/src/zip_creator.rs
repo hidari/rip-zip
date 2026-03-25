@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::error::ZipError;
+use crate::path_utils;
 use crate::traits::{FileWalker, ZipArchiver};
 use crate::types::{FileSkipReason, ZipEvent, ZipStats};
 use crate::validation;
@@ -52,6 +53,16 @@ pub fn create_zip(
 
         // パス区切り文字の正規化（ZIP仕様準拠）
         let name = validation::normalize_path_separator(&entry.relative_path);
+
+        // ZIPエントリパスの各セグメントをサニタイズ
+        let sanitized_name = path_utils::sanitize_zip_entry_path(&name);
+        if sanitized_name != name {
+            on_event(ZipEvent::PathSanitized {
+                original: name,
+                sanitized: sanitized_name.clone(),
+            });
+        }
+        let name = sanitized_name;
 
         // ファイル名長チェック
         if validation::is_filename_too_long(&name) {
@@ -382,6 +393,73 @@ mod tests {
             let skipped = skipped.borrow();
             assert_eq!(skipped.len(), 1);
             assert_eq!(skipped[0].1, FileSkipReason::PathTraversal);
+        }
+
+        #[test]
+        fn sanitizes_entry_path_segments_and_emits_event() {
+            // ZIPエントリパスの各セグメントがサニタイズされることを検証
+            let dir = tempfile::TempDir::new().unwrap();
+            let source = dir.path().join("src");
+            std::fs::create_dir(&source).unwrap();
+
+            let walker = FakeWalker::new(vec![Ok(make_file_entry("dir/file:name.txt", 100))]);
+            let mut archiver = FakeArchiver::new();
+            let sanitized_events: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+
+            create_zip(
+                &walker,
+                &mut archiver,
+                &source,
+                &dir.path().join("out.zip"),
+                false,
+                &|event| {
+                    if let ZipEvent::PathSanitized {
+                        original,
+                        sanitized,
+                    } = event
+                    {
+                        sanitized_events.borrow_mut().push((original, sanitized));
+                    }
+                },
+            )
+            .unwrap();
+
+            // archiverにはサニタイズ後のパスが渡される
+            assert_eq!(archiver.added_files[0].0, "dir/file_name.txt");
+
+            // PathSanitizedイベントが発火している
+            let events = sanitized_events.borrow();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].0, "dir/file:name.txt");
+            assert_eq!(events[0].1, "dir/file_name.txt");
+        }
+
+        #[test]
+        fn does_not_emit_event_for_safe_path() {
+            // 安全なパスではPathSanitizedイベントが発火しない
+            let dir = tempfile::TempDir::new().unwrap();
+            let source = dir.path().join("src");
+            std::fs::create_dir(&source).unwrap();
+
+            let walker = FakeWalker::new(vec![Ok(make_file_entry("dir/safe_file.txt", 100))]);
+            let mut archiver = FakeArchiver::new();
+            let event_count: RefCell<usize> = RefCell::new(0);
+
+            create_zip(
+                &walker,
+                &mut archiver,
+                &source,
+                &dir.path().join("out.zip"),
+                false,
+                &|event| {
+                    if matches!(event, ZipEvent::PathSanitized { .. }) {
+                        *event_count.borrow_mut() += 1;
+                    }
+                },
+            )
+            .unwrap();
+
+            assert_eq!(*event_count.borrow(), 0);
         }
 
         #[test]
