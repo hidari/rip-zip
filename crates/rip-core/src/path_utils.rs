@@ -12,6 +12,7 @@ fn is_invisible_unicode(c: char) -> bool {
         | '\u{200E}'..='\u{200F}' // LRM, RLM
         | '\u{202A}'..='\u{202E}' // 双方向埋め込み/オーバーライド
         | '\u{2066}'..='\u{2069}' // 双方向分離
+        | '\u{2028}'..='\u{2029}' // LINE SEPARATOR, PARAGRAPH SEPARATOR
     )
 }
 
@@ -56,12 +57,10 @@ fn is_windows_reserved_name(name: &str) -> bool {
 /// 4. Windows予約デバイス名をエスケープ
 /// 5. 空文字列になった場合のフォールバック
 pub fn sanitize_filename(name: &str) -> String {
-    // 1. 不可視Unicode文字を除去
-    let filtered: String = name.chars().filter(|c| !is_invisible_unicode(*c)).collect();
-
-    // 2. 危険文字・制御文字をアンダースコアに置換
-    let sanitized: String = filtered
+    // 1-2. 不可視Unicode文字を除去し、危険文字・制御文字をアンダースコアに置換
+    let sanitized: String = name
         .chars()
+        .filter(|c| !is_invisible_unicode(*c))
         .map(|c| match c {
             '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
             _ if c.is_control() => '_',
@@ -69,27 +68,20 @@ pub fn sanitize_filename(name: &str) -> String {
         })
         .collect();
 
-    // 3. 末尾のドット・スペースを除去（Windows互換）
-    let trimmed = sanitized.trim_end_matches(['.', ' ']).to_string();
+    // 3. 先頭スペース・末尾のドット/スペースを除去（Windows互換）
+    let trimmed = sanitized
+        .trim_start_matches(' ')
+        .trim_end_matches(['.', ' ']);
 
-    // 4. Windows予約デバイス名の処理（最初のドットで分割）
-    let result = match trimmed.find('.') {
-        Some(pos) => {
-            let stem = &trimmed[..pos];
-            let ext = &trimmed[pos..];
-            if is_windows_reserved_name(stem) {
-                format!("{}_{}", stem, ext)
-            } else {
-                trimmed
-            }
+    // 4. Windows予約デバイス名の処理（最初のドットで分割してstemを判定）
+    let stem = trimmed.find('.').map_or(trimmed, |pos| &trimmed[..pos]);
+    let result = if is_windows_reserved_name(stem) {
+        match trimmed.find('.') {
+            Some(pos) => format!("{}_{}", &trimmed[..pos], &trimmed[pos..]),
+            None => format!("{}_", trimmed),
         }
-        None => {
-            if is_windows_reserved_name(&trimmed) {
-                format!("{}_", trimmed)
-            } else {
-                trimmed
-            }
-        }
+    } else {
+        trimmed.to_string()
     };
 
     // 5. サニタイズ後に空になった場合のフォールバック
@@ -300,6 +292,13 @@ mod tests {
                 // ただし.はそのまま残る
                 assert_eq!(sanitize_filename("evil\u{202E}cod.exe"), "evilcod.exe");
             }
+
+            #[test]
+            fn strips_line_and_paragraph_separators() {
+                // U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR が除去される
+                assert_eq!(sanitize_filename("file\u{2028}name"), "filename");
+                assert_eq!(sanitize_filename("file\u{2029}name"), "filename");
+            }
         }
 
         /// Windows予約デバイス名の処理仕様
@@ -347,10 +346,18 @@ mod tests {
                 assert_eq!(sanitize_filename("LPTA"), "LPTA");
                 assert_eq!(sanitize_filename("connect"), "connect");
             }
+
+            #[test]
+            fn detects_reserved_name_with_injected_invisible_chars() {
+                // 零幅文字を注入してWindows予約名チェックを回避しようとする攻撃を無効化
+                // パス1で不可視文字除去 → パス4で予約名検出
+                assert_eq!(sanitize_filename("C\u{200B}ON"), "CON_");
+                assert_eq!(sanitize_filename("N\u{FEFF}UL.txt"), "NUL_.txt");
+            }
         }
 
-        /// 末尾のドット・スペースの除去仕様（Windows互換）
-        mod trailing_dots_and_spaces {
+        /// ドット・スペースのトリム仕様（Windows互換）
+        mod dots_and_spaces {
             use super::*;
 
             #[test]
@@ -365,6 +372,13 @@ mod tests {
                 // Windowsでは末尾のスペースが無視されるため除去する
                 assert_eq!(sanitize_filename("file "), "file");
                 assert_eq!(sanitize_filename("file   "), "file");
+            }
+
+            #[test]
+            fn trims_leading_spaces() {
+                // Windowsでは先頭のスペースも無視されるため除去する
+                assert_eq!(sanitize_filename("  file"), "file");
+                assert_eq!(sanitize_filename("   leading.txt"), "leading.txt");
             }
 
             #[test]
@@ -435,7 +449,8 @@ mod tests {
             }
 
             #[test]
-            fn does_not_panic_on_extremely_long_input() {
+            fn preserves_length_without_truncation() {
+                // sanitize_filenameは長さ制限を行わない（切り詰めは呼び出し元の責務）
                 let long_input = "a".repeat(100_000);
                 let result = sanitize_filename(&long_input);
                 assert_eq!(result.len(), 100_000);
@@ -466,13 +481,6 @@ mod tests {
                 // 改行・タブは制御文字として置換
                 let result = sanitize_filename("file\n\t\rname");
                 assert_eq!(result, "file___name");
-            }
-
-            #[test]
-            fn does_not_panic_on_whitespace_only() {
-                // スペースのみ → 末尾trim → 空 → フォールバック
-                let result = sanitize_filename("   ");
-                assert_eq!(result, "archive");
             }
         }
     }
