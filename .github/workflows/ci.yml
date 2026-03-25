@@ -21,6 +21,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache cargo registry
@@ -81,6 +82,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Cache cargo build
