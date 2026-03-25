@@ -30,6 +30,7 @@ fn main() -> ExitCode {
             "--exclude",
             "xtask",
         ]),
+        Some("audit") => run_audit(),
         Some("help") | Some("--help") | Some("-h") => {
             print_help();
             ExitCode::SUCCESS
@@ -58,6 +59,7 @@ fn print_help() {
     eprintln!("  test-all  Run all tests (including #[ignore])");
     eprintln!("  build     Build entire workspace");
     eprintln!("  check     Type check");
+    eprintln!("  audit     Run security audit (cargo-deny)");
     eprintln!("  help      Show this help");
 }
 
@@ -75,6 +77,21 @@ fn run_fmt() -> ExitCode {
         "-D",
         "warnings",
     ])
+}
+
+// セキュリティ監査（cargo-deny）
+fn run_audit() -> ExitCode {
+    let status = Command::new("cargo")
+        .args(["deny", "check"])
+        .status()
+        .expect(
+            "failed to execute cargo deny. Is cargo-deny installed? Run: cargo install cargo-deny",
+        );
+    if status.success() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 // cargo コマンドの結果を ExitCode に変換する
