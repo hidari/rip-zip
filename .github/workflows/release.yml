@@ -49,7 +49,7 @@ jobs:
 
       - name: Generate SHA256 checksum
         shell: bash
-        run: shasum -a 256 rip-zip-${{ matrix.target }}.zip > rip-zip-${{ matrix.target }}.zip.sha256
+        run: sha256sum rip-zip-${{ matrix.target }}.zip > rip-zip-${{ matrix.target }}.zip.sha256
 
       - name: Upload Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
