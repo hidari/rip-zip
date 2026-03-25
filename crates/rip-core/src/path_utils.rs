@@ -100,11 +100,13 @@ pub fn sanitize_filename(name: &str) -> String {
 
 /// ZIPエントリパスの各セグメントをサニタイズする
 ///
+/// バックスラッシュをフォワードスラッシュに正規化した後、
 /// パスを `/` で分割し、各セグメントに `sanitize_filename_core` を適用後、
 /// `/` で再結合する。空セグメント（連続スラッシュ）は除去する。
 /// サニタイズ後に空になったセグメントは `_` に置換する。
 pub fn sanitize_zip_entry_path(path: &str) -> String {
-    let segments: Vec<String> = path
+    let normalized = path.replace('\\', "/");
+    let segments: Vec<String> = normalized
         .split('/')
         .filter(|s| !s.is_empty())
         .map(|segment| sanitize_filename_core(segment).unwrap_or_else(|| "_".to_string()))
@@ -664,6 +666,18 @@ mod tests {
                 // 空文字列は "_" にフォールバック
                 assert_eq!(sanitize_zip_entry_path(""), "_");
             }
+
+            #[test]
+            fn replaces_single_dot_segment_with_underscore() {
+                // "." はトリミングで空になり "_" にフォールバック
+                assert_eq!(sanitize_zip_entry_path("."), "_");
+            }
+
+            #[test]
+            fn replaces_double_dot_segment_with_underscore() {
+                // ".." はトリミングで空になり "_" にフォールバック
+                assert_eq!(sanitize_zip_entry_path(".."), "_");
+            }
         }
 
         /// セキュリティ関連の仕様
@@ -700,6 +714,15 @@ mod tests {
                 assert_eq!(
                     sanitize_zip_entry_path("dir/\u{202E}evil.txt"),
                     "dir/evil.txt"
+                );
+            }
+
+            #[test]
+            fn normalizes_backslashes_as_path_separators() {
+                // バックスラッシュはフォワードスラッシュに正規化される
+                assert_eq!(
+                    sanitize_zip_entry_path("dir\\sub\\file.txt"),
+                    "dir/sub/file.txt"
                 );
             }
         }
