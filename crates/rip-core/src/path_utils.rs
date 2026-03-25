@@ -1,16 +1,103 @@
 use std::path::{Path, PathBuf};
 
+/// ファイル名に不要な不可視Unicode文字（零幅文字・BOM・双方向制御文字）かを判定する
+///
+/// これらはファイル名に含まれるべきではなく、セキュリティリスク（ファイル名偽装等）がある。
+fn is_invisible_unicode(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}'..='\u{200D}'   // 零幅文字 (ZERO WIDTH SPACE, NON-JOINER, JOINER)
+        | '\u{FEFF}'              // BOM / ZERO WIDTH NO-BREAK SPACE
+        | '\u{2060}'              // WORD JOINER
+        | '\u{200E}'..='\u{200F}' // LRM, RLM
+        | '\u{202A}'..='\u{202E}' // 双方向埋め込み/オーバーライド
+        | '\u{2066}'..='\u{2069}' // 双方向分離
+    )
+}
+
+/// Windows予約デバイス名かどうかを判定する（大文字小文字非区別）
+///
+/// Windowsではこれらの名前をファイル名として使用できない。
+fn is_windows_reserved_name(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
 /// ファイル名から危険な文字を安全な文字に置換する
 ///
-/// ZIPファイル名として不正な文字や制御文字をアンダースコアに置き換える。
+/// ZIPファイル名として安全な文字列を生成する。以下の処理を順に適用する:
+/// 1. 不可視Unicode文字（零幅文字、BOM、双方向制御文字）を除去
+/// 2. 危険文字・制御文字をアンダースコアに置換
+/// 3. 末尾のドット・スペースを除去（Windows互換）
+/// 4. Windows予約デバイス名をエスケープ
+/// 5. 空文字列になった場合のフォールバック
 pub fn sanitize_filename(name: &str) -> String {
-    name.chars()
+    // 1. 不可視Unicode文字を除去
+    let filtered: String = name.chars().filter(|c| !is_invisible_unicode(*c)).collect();
+
+    // 2. 危険文字・制御文字をアンダースコアに置換
+    let sanitized: String = filtered
+        .chars()
         .map(|c| match c {
             '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
             _ if c.is_control() => '_',
             _ => c,
         })
-        .collect()
+        .collect();
+
+    // 3. 末尾のドット・スペースを除去（Windows互換）
+    let trimmed = sanitized.trim_end_matches(['.', ' ']).to_string();
+
+    // 4. Windows予約デバイス名の処理（最初のドットで分割）
+    let result = match trimmed.find('.') {
+        Some(pos) => {
+            let stem = &trimmed[..pos];
+            let ext = &trimmed[pos..];
+            if is_windows_reserved_name(stem) {
+                format!("{}_{}", stem, ext)
+            } else {
+                trimmed
+            }
+        }
+        None => {
+            if is_windows_reserved_name(&trimmed) {
+                format!("{}_", trimmed)
+            } else {
+                trimmed
+            }
+        }
+    };
+
+    // 5. サニタイズ後に空になった場合のフォールバック
+    if result.is_empty() {
+        "archive".to_string()
+    } else {
+        result
+    }
 }
 
 /// ソースディレクトリから出力ZIPファイルのパスを決定する
@@ -48,48 +135,345 @@ pub fn get_zip_path(source_dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// sanitize_filename の仕様
     mod sanitize_filename {
         use super::*;
 
-        #[test]
-        fn replaces_each_dangerous_character_with_underscore() {
-            // 各危険文字が個別にアンダースコアへ置換されることを検証
-            assert_eq!(sanitize_filename("file\\name"), "file_name");
-            assert_eq!(sanitize_filename("file/name"), "file_name");
-            assert_eq!(sanitize_filename("file:name"), "file_name");
-            assert_eq!(sanitize_filename("file*name"), "file_name");
-            assert_eq!(sanitize_filename("file?name"), "file_name");
-            assert_eq!(sanitize_filename("file\"name"), "file_name");
-            assert_eq!(sanitize_filename("file<name"), "file_name");
-            assert_eq!(sanitize_filename("file>name"), "file_name");
-            assert_eq!(sanitize_filename("file|name"), "file_name");
-            assert_eq!(sanitize_filename("file\0name"), "file_name");
+        /// 危険文字の置換仕様
+        mod dangerous_characters {
+            use super::*;
+
+            #[test]
+            fn replaces_each_dangerous_character_with_underscore() {
+                // 各危険文字が個別にアンダースコアへ置換されることを検証
+                assert_eq!(sanitize_filename("file\\name"), "file_name");
+                assert_eq!(sanitize_filename("file/name"), "file_name");
+                assert_eq!(sanitize_filename("file:name"), "file_name");
+                assert_eq!(sanitize_filename("file*name"), "file_name");
+                assert_eq!(sanitize_filename("file?name"), "file_name");
+                assert_eq!(sanitize_filename("file\"name"), "file_name");
+                assert_eq!(sanitize_filename("file<name"), "file_name");
+                assert_eq!(sanitize_filename("file>name"), "file_name");
+                assert_eq!(sanitize_filename("file|name"), "file_name");
+                assert_eq!(sanitize_filename("file\0name"), "file_name");
+            }
+
+            #[test]
+            fn replaces_multiple_dangerous_chars_independently() {
+                // 複数の危険文字が混在する場合、それぞれ独立に置換される
+                assert_eq!(sanitize_filename("a\\b/c:d"), "a_b_c_d");
+            }
         }
 
-        #[test]
-        fn replaces_control_characters_with_underscore() {
-            // ASCII制御文字がアンダースコアへ置換されることを検証
-            assert_eq!(sanitize_filename("file\x01name"), "file_name");
-            assert_eq!(sanitize_filename("file\x1fname"), "file_name");
+        /// 制御文字の置換仕様
+        mod control_characters {
+            use super::*;
+
+            #[test]
+            fn replaces_c0_control_characters_with_underscore() {
+                // C0制御文字 (U+0001-U+001F) がアンダースコアに置換される
+                assert_eq!(sanitize_filename("file\x01name"), "file_name");
+                assert_eq!(sanitize_filename("file\x1fname"), "file_name");
+            }
+
+            #[test]
+            fn replaces_del_character_with_underscore() {
+                // DEL (U+007F) がアンダースコアに置換される
+                assert_eq!(sanitize_filename("file\x7fname"), "file_name");
+            }
+
+            #[test]
+            fn replaces_c1_control_characters_with_underscore() {
+                // C1制御文字 (U+0080-U+009F) がアンダースコアに置換される
+                assert_eq!(sanitize_filename("file\u{0080}name"), "file_name");
+                assert_eq!(sanitize_filename("file\u{009F}name"), "file_name");
+            }
         }
 
-        #[test]
-        fn preserves_normal_and_unicode_characters() {
-            // 通常のASCII文字およびUnicode文字はそのまま保持される
-            assert_eq!(sanitize_filename("normal_file.txt"), "normal_file.txt");
-            assert_eq!(sanitize_filename("日本語ファイル"), "日本語ファイル");
-            assert_eq!(sanitize_filename("file-name.rs"), "file-name.rs");
+        /// 通常文字の保持仕様
+        mod normal_characters {
+            use super::*;
+
+            #[test]
+            fn preserves_ascii_and_unicode_characters() {
+                // 通常のASCII文字およびUnicode文字はそのまま保持される
+                assert_eq!(sanitize_filename("normal_file.txt"), "normal_file.txt");
+                assert_eq!(sanitize_filename("日本語ファイル"), "日本語ファイル");
+                assert_eq!(sanitize_filename("file-name.rs"), "file-name.rs");
+            }
+
+            #[test]
+            fn preserves_emoji_characters() {
+                // 絵文字はファイル名として有効
+                assert_eq!(sanitize_filename("📁test📂"), "📁test📂");
+            }
+
+            #[test]
+            fn preserves_combining_characters() {
+                // 結合文字（例: e + combining acute accent）は保持される
+                assert_eq!(
+                    sanitize_filename("caf\u{0065}\u{0301}"),
+                    "caf\u{0065}\u{0301}"
+                );
+            }
         }
 
-        #[test]
-        fn returns_empty_string_for_empty_input() {
-            assert_eq!(sanitize_filename(""), "");
+        /// ゼロ幅Unicode文字の除去仕様
+        mod zero_width_unicode {
+            use super::*;
+
+            #[test]
+            fn strips_zero_width_space() {
+                // U+200B ZERO WIDTH SPACE が除去される
+                assert_eq!(sanitize_filename("file\u{200B}name"), "filename");
+            }
+
+            #[test]
+            fn strips_zero_width_non_joiner() {
+                // U+200C ZERO WIDTH NON-JOINER が除去される
+                assert_eq!(sanitize_filename("file\u{200C}name"), "filename");
+            }
+
+            #[test]
+            fn strips_zero_width_joiner() {
+                // U+200D ZERO WIDTH JOINER が除去される
+                assert_eq!(sanitize_filename("file\u{200D}name"), "filename");
+            }
+
+            #[test]
+            fn strips_bom() {
+                // U+FEFF BOM / ZERO WIDTH NO-BREAK SPACE が除去される
+                assert_eq!(sanitize_filename("\u{FEFF}filename"), "filename");
+            }
+
+            #[test]
+            fn strips_word_joiner() {
+                // U+2060 WORD JOINER が除去される
+                assert_eq!(sanitize_filename("file\u{2060}name"), "filename");
+            }
+
+            #[test]
+            fn strips_multiple_zero_width_chars_from_mixed_input() {
+                // 通常文字と混在する零幅文字がすべて除去される
+                assert_eq!(
+                    sanitize_filename("\u{200B}a\u{200C}b\u{200D}c\u{FEFF}"),
+                    "abc"
+                );
+            }
+
+            #[test]
+            fn returns_fallback_for_only_zero_width_chars() {
+                // 全てゼロ幅文字のみの場合はフォールバック
+                assert_eq!(sanitize_filename("\u{200B}\u{200C}\u{200D}"), "archive");
+            }
         }
 
-        #[test]
-        fn replaces_multiple_dangerous_chars_independently() {
-            // 複数の危険文字が混在する場合、それぞれ独立に置換される
-            assert_eq!(sanitize_filename("a\\b/c:d"), "a_b_c_d");
+        /// 双方向制御文字の除去仕様（ファイル名偽装攻撃の防止）
+        mod bidi_control_characters {
+            use super::*;
+
+            #[test]
+            fn strips_left_to_right_and_right_to_left_marks() {
+                // U+200E LRM, U+200F RLM が除去される
+                assert_eq!(sanitize_filename("file\u{200E}name"), "filename");
+                assert_eq!(sanitize_filename("file\u{200F}name"), "filename");
+            }
+
+            #[test]
+            fn strips_directional_embedding_and_override() {
+                // U+202A-U+202E 双方向埋め込み/オーバーライドが除去される
+                assert_eq!(sanitize_filename("file\u{202A}name"), "filename");
+                assert_eq!(sanitize_filename("file\u{202E}name"), "filename");
+            }
+
+            #[test]
+            fn strips_directional_isolate() {
+                // U+2066-U+2069 双方向分離が除去される
+                assert_eq!(sanitize_filename("file\u{2066}name"), "filename");
+                assert_eq!(sanitize_filename("file\u{2069}name"), "filename");
+            }
+
+            #[test]
+            fn neutralizes_rtl_filename_spoofing() {
+                // RTLオーバーライドによるファイル名偽装が無害化される
+                // "evil\u{202E}cod.exe" -> RTL除去後 "evilcod.exe"
+                // ただし.はそのまま残る
+                assert_eq!(sanitize_filename("evil\u{202E}cod.exe"), "evilcod.exe");
+            }
+        }
+
+        /// Windows予約デバイス名の処理仕様
+        mod windows_reserved_names {
+            use super::*;
+
+            #[test]
+            fn appends_underscore_to_reserved_names() {
+                // 予約名にアンダースコアを付与してデバイス名衝突を回避
+                assert_eq!(sanitize_filename("CON"), "CON_");
+                assert_eq!(sanitize_filename("PRN"), "PRN_");
+                assert_eq!(sanitize_filename("AUX"), "AUX_");
+                assert_eq!(sanitize_filename("NUL"), "NUL_");
+            }
+
+            #[test]
+            fn appends_underscore_to_com_and_lpt_ports() {
+                assert_eq!(sanitize_filename("COM1"), "COM1_");
+                assert_eq!(sanitize_filename("COM9"), "COM9_");
+                assert_eq!(sanitize_filename("LPT1"), "LPT1_");
+                assert_eq!(sanitize_filename("LPT9"), "LPT9_");
+            }
+
+            #[test]
+            fn handles_reserved_names_case_insensitively() {
+                // 大文字小文字を区別しない
+                assert_eq!(sanitize_filename("con"), "con_");
+                assert_eq!(sanitize_filename("Con"), "Con_");
+                assert_eq!(sanitize_filename("CON"), "CON_");
+            }
+
+            #[test]
+            fn appends_underscore_before_extension_for_reserved_names() {
+                // 拡張子付きの予約名: stemと拡張子の間に_を挿入
+                assert_eq!(sanitize_filename("CON.txt"), "CON_.txt");
+                assert_eq!(sanitize_filename("nul.zip"), "nul_.zip");
+                assert_eq!(sanitize_filename("COM1.tar.gz"), "COM1_.tar.gz");
+            }
+
+            #[test]
+            fn does_not_modify_non_reserved_names() {
+                // 予約名に似ているが非該当のもの
+                assert_eq!(sanitize_filename("CONX"), "CONX");
+                assert_eq!(sanitize_filename("COM10"), "COM10");
+                assert_eq!(sanitize_filename("LPTA"), "LPTA");
+                assert_eq!(sanitize_filename("connect"), "connect");
+            }
+        }
+
+        /// 末尾のドット・スペースの除去仕様（Windows互換）
+        mod trailing_dots_and_spaces {
+            use super::*;
+
+            #[test]
+            fn trims_trailing_dots() {
+                // Windowsでは末尾のドットが無視されるため除去する
+                assert_eq!(sanitize_filename("file."), "file");
+                assert_eq!(sanitize_filename("file..."), "file");
+            }
+
+            #[test]
+            fn trims_trailing_spaces() {
+                // Windowsでは末尾のスペースが無視されるため除去する
+                assert_eq!(sanitize_filename("file "), "file");
+                assert_eq!(sanitize_filename("file   "), "file");
+            }
+
+            #[test]
+            fn trims_mixed_trailing_dots_and_spaces() {
+                assert_eq!(sanitize_filename("file. ."), "file");
+            }
+
+            #[test]
+            fn preserves_dots_in_middle() {
+                // 中間のドットは保持される
+                assert_eq!(sanitize_filename("file.tar.gz"), "file.tar.gz");
+            }
+        }
+
+        /// エッジケースの仕様
+        mod edge_cases {
+            use super::*;
+
+            #[test]
+            fn returns_fallback_for_empty_input() {
+                // 空文字列はフォールバック名を返す
+                assert_eq!(sanitize_filename(""), "archive");
+            }
+
+            #[test]
+            fn returns_fallback_when_all_chars_are_invisible() {
+                // 全文字が不可視の場合はフォールバック
+                assert_eq!(sanitize_filename("\u{200B}\u{FEFF}\u{200E}"), "archive");
+            }
+
+            #[test]
+            fn returns_fallback_for_only_dots() {
+                // ドットのみの入力は末尾trim後に空になりフォールバック
+                assert_eq!(sanitize_filename(".."), "archive");
+                assert_eq!(sanitize_filename("..."), "archive");
+            }
+
+            #[test]
+            fn returns_fallback_for_only_spaces() {
+                // スペースのみの入力は末尾trim後に空になりフォールバック
+                assert_eq!(sanitize_filename("   "), "archive");
+            }
+
+            #[test]
+            fn handles_all_dangerous_characters() {
+                // 全文字が危険文字 → 全てアンダースコアに置換
+                assert_eq!(sanitize_filename("***"), "___");
+            }
+        }
+
+        /// naughty stringsによる堅牢性テスト
+        mod naughty_strings {
+            use super::*;
+
+            #[test]
+            fn does_not_panic_on_script_injection() {
+                let result = sanitize_filename("<script>alert(1)</script>");
+                assert!(!result.is_empty());
+                // <と>はアンダースコアに置換される
+                assert!(!result.contains('<'));
+                assert!(!result.contains('>'));
+            }
+
+            #[test]
+            fn does_not_panic_on_sql_injection() {
+                let result = sanitize_filename("' OR 1=1 --");
+                assert!(!result.is_empty());
+            }
+
+            #[test]
+            fn does_not_panic_on_extremely_long_input() {
+                let long_input = "a".repeat(100_000);
+                let result = sanitize_filename(&long_input);
+                assert_eq!(result.len(), 100_000);
+            }
+
+            #[test]
+            fn does_not_panic_on_mixed_scripts() {
+                // キリル文字、ギリシャ文字、中国語の混合
+                let result = sanitize_filename("файл_αρχείο_文件");
+                assert_eq!(result, "файл_αρχείο_文件");
+            }
+
+            #[test]
+            fn does_not_panic_on_null_bytes_embedded() {
+                let result = sanitize_filename("file\0\0\0name");
+                assert_eq!(result, "file___name");
+            }
+
+            #[test]
+            fn does_not_panic_on_replacement_character() {
+                // U+FFFD REPLACEMENT CHARACTER は通常文字として保持
+                let result = sanitize_filename("\u{FFFD}test");
+                assert_eq!(result, "\u{FFFD}test");
+            }
+
+            #[test]
+            fn does_not_panic_on_newlines_and_tabs() {
+                // 改行・タブは制御文字として置換
+                let result = sanitize_filename("file\n\t\rname");
+                assert_eq!(result, "file___name");
+            }
+
+            #[test]
+            fn does_not_panic_on_whitespace_only() {
+                // スペースのみ → 末尾trim → 空 → フォールバック
+                let result = sanitize_filename("   ");
+                assert_eq!(result, "archive");
+            }
         }
     }
 
