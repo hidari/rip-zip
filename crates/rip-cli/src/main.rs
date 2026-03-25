@@ -96,9 +96,14 @@ fn handle_event(event: ZipEvent, verbose: bool) {
         }
         ZipEvent::FileSkipped { name, reason } => {
             // サイズ制限超過は常に表示（ユーザーが--zip64の使用を検討できるように）
-            // それ以外はverbose時のみ表示（元の挙動を維持）
-            if reason.contains("1GB limit") || verbose {
-                eprintln!("Warning: Skipping {}: {}", name, reason);
+            // それ以外はverbose時のみ表示
+            if reason.is_always_visible() || verbose {
+                let hint = if reason.is_always_visible() {
+                    ". Use --zip64 for large files"
+                } else {
+                    ""
+                };
+                eprintln!("Warning: Skipping {}: {}{}", name, reason, hint);
             }
         }
         ZipEvent::ArchiveCompleted { stats } => {
