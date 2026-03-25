@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::ZipError;
 use crate::traits::{FileWalker, ZipArchiver};
-use crate::types::{ZipEvent, ZipStats};
+use crate::types::{FileSkipReason, ZipEvent, ZipStats};
 use crate::validation;
 
 /// ZIPアーカイブを作成する
@@ -45,7 +45,7 @@ pub fn create_zip(
         if validation::has_path_traversal(&entry.relative_path) {
             on_event(ZipEvent::FileSkipped {
                 name: entry.relative_path.display().to_string(),
-                reason: "path contains parent directory reference".to_string(),
+                reason: FileSkipReason::PathTraversal,
             });
             continue;
         }
@@ -57,7 +57,7 @@ pub fn create_zip(
         if validation::is_filename_too_long(&name) {
             on_event(ZipEvent::FileSkipped {
                 name: name.clone(),
-                reason: "filename too long".to_string(),
+                reason: FileSkipReason::FilenameTooLong,
             });
             continue;
         }
@@ -70,7 +70,7 @@ pub fn create_zip(
         if validation::should_skip_large_file(entry.size, use_zip64) {
             on_event(ZipEvent::FileSkipped {
                 name: name.clone(),
-                reason: "exceeds 1GB limit, skipping. Use --zip64 for large files.".to_string(),
+                reason: FileSkipReason::ExceedsFileSizeLimit,
             });
             stats.file_count -= 1;
             continue;
@@ -363,7 +363,7 @@ mod tests {
                 Ok(make_file_entry("safe.txt", 50)),
             ]);
             let mut archiver = FakeArchiver::new();
-            let skipped: RefCell<Vec<String>> = RefCell::new(Vec::new());
+            let skipped: RefCell<Vec<(String, FileSkipReason)>> = RefCell::new(Vec::new());
 
             let stats = create_zip(
                 &walker,
@@ -372,15 +372,17 @@ mod tests {
                 &dir.path().join("out.zip"),
                 false,
                 &|event| {
-                    if let ZipEvent::FileSkipped { name, .. } = event {
-                        skipped.borrow_mut().push(name);
+                    if let ZipEvent::FileSkipped { name, reason } = event {
+                        skipped.borrow_mut().push((name, reason));
                     }
                 },
             )
             .unwrap();
 
             assert_eq!(stats.file_count, 1);
-            assert_eq!(skipped.borrow().len(), 1);
+            let skipped = skipped.borrow();
+            assert_eq!(skipped.len(), 1);
+            assert_eq!(skipped[0].1, FileSkipReason::PathTraversal);
         }
 
         #[test]
@@ -550,14 +552,14 @@ mod tests {
 
         #[test]
         fn emits_file_skipped_event_with_reason_for_large_file() {
-            // 1GB超ファイルスキップ時にFileSkippedイベントに理由が含まれることを検証
+            // 1GB超ファイルスキップ時にFileSkippedイベントに正しい理由が含まれることを検証
             let dir = tempfile::TempDir::new().unwrap();
             let source = dir.path().join("src");
             std::fs::create_dir(&source).unwrap();
 
             let walker = FakeWalker::new(vec![Ok(make_file_entry("huge.bin", MAX_FILE_SIZE + 1))]);
             let mut archiver = FakeArchiver::new();
-            let skipped_reasons: RefCell<Vec<String>> = RefCell::new(Vec::new());
+            let skipped_reasons: RefCell<Vec<FileSkipReason>> = RefCell::new(Vec::new());
 
             create_zip(
                 &walker,
@@ -575,7 +577,7 @@ mod tests {
 
             let reasons = skipped_reasons.borrow();
             assert_eq!(reasons.len(), 1);
-            assert!(reasons[0].contains("1GB"));
+            assert_eq!(reasons[0], FileSkipReason::ExceedsFileSizeLimit);
         }
     }
 
