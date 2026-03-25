@@ -5,7 +5,7 @@ use clap::Parser;
 use rip_adapters::walkdir_walker::WalkDirWalker;
 use rip_adapters::zip_archiver::ZipWriterArchiver;
 use rip_core::path_utils::get_zip_path;
-use rip_core::types::{FileSkipReason, ZipEvent};
+use rip_core::types::ZipEvent;
 use rip_core::zip_creator;
 
 #[derive(Parser)]
@@ -98,7 +98,7 @@ fn handle_event(event: ZipEvent, verbose: bool) {
             // サイズ制限超過は常に表示（ユーザーが--zip64の使用を検討できるように）
             // それ以外はverbose時のみ表示
             if reason.is_always_visible() || verbose {
-                let hint = if matches!(reason, FileSkipReason::ExceedsFileSizeLimit) {
+                let hint = if reason.is_always_visible() {
                     ". Use --zip64 for large files"
                 } else {
                     ""

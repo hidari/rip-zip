@@ -62,19 +62,18 @@ pub fn create_zip(
             continue;
         }
 
-        // ファイル数制限チェック
-        stats.file_count += 1;
-        validation::check_file_count(stats.file_count)?;
-
-        // 個別ファイルサイズチェック
+        // 個別ファイルサイズチェック（スキップ判定はカウント前に行う）
         if validation::should_skip_large_file(entry.size, use_zip64) {
             on_event(ZipEvent::FileSkipped {
                 name: name.clone(),
                 reason: FileSkipReason::ExceedsFileSizeLimit,
             });
-            stats.file_count -= 1;
             continue;
         }
+
+        // ファイル数制限チェック（追加するファイルのみカウント）
+        stats.file_count += 1;
+        validation::check_file_count(stats.file_count)?;
 
         // 合計サイズチェック
         validation::check_total_size(stats.total_size, entry.size, use_zip64)?;
