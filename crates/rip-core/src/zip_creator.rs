@@ -55,14 +55,16 @@ pub fn create_zip(
         let name = validation::normalize_path_separator(&entry.relative_path);
 
         // ZIPエントリパスの各セグメントをサニタイズ
-        let sanitized_name = path_utils::sanitize_zip_entry_path(&name);
-        if sanitized_name != name {
-            on_event(ZipEvent::PathSanitized {
-                original: name,
-                sanitized: sanitized_name.clone(),
-            });
-        }
-        let name = sanitized_name;
+        let name = {
+            let sanitized = path_utils::sanitize_zip_entry_path(&name);
+            if sanitized != name {
+                on_event(ZipEvent::PathSanitized {
+                    original: name,
+                    sanitized: sanitized.clone(),
+                });
+            }
+            sanitized
+        };
 
         // ファイル名長チェック
         if validation::is_filename_too_long(&name) {
