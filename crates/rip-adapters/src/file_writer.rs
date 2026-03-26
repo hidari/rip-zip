@@ -25,13 +25,12 @@ impl FileWriter for FsFileWriter {
         let mut file = fs::File::create(path)?;
         let bytes = io::copy(reader, &mut file)?;
 
-        // パーミッション設定はfileハンドルが有効な間に行う
-        // 注: File::set_permissionsは内部的にパスベースのため完全なfchmodではないが、
-        // fileドロップ後よりも安全
+        // File::set_permissions()はUnixではfchmod(2)ベースのため、
+        // パスベースのfs::set_permissions()よりもTOCTOU耐性が高い
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(fs::Permissions::from_mode(permissions))?;
+            file.set_permissions(fs::Permissions::from_mode(permissions & 0o777))?;
         }
 
         #[cfg(not(unix))]
@@ -41,7 +40,10 @@ impl FileWriter for FsFileWriter {
     }
 
     fn exists(&self, path: &Path) -> bool {
-        path.exists()
+        // symlink_metadata()を使用してリンク自体の存在を検出する
+        // path.exists()はシンボリックリンクを追跡するため、
+        // dangling symlinkをfalseとして返してしまう
+        path.symlink_metadata().is_ok()
     }
 
     fn is_symlink(&self, path: &Path) -> bool {
@@ -206,6 +208,18 @@ mod tests {
 
             let writer = FsFileWriter;
             assert!(writer.exists(dir.path()));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn returns_true_for_dangling_symlink() {
+            // dangling symlinkに対してもtrueを返すこと（セキュリティ上重要）
+            let dir = tempfile::TempDir::new().unwrap();
+            let link = dir.path().join("dangling_link");
+            std::os::unix::fs::symlink("/nonexistent/target", &link).unwrap();
+
+            let writer = FsFileWriter;
+            assert!(writer.exists(&link));
         }
     }
 

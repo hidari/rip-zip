@@ -113,171 +113,6 @@ mod tests {
         zip_path
     }
 
-    // --- zip crate API契約テスト（読み取り系） ---
-    // zip crate 8.4.0 の読み取り系APIの存在・挙動を確認するテスト群。
-    // バージョンアップ時にAPI互換性の破損を自動検出する。
-
-    mod zip_crate_read_contract {
-        use super::*;
-
-        #[test]
-        fn zip_archive_new_opens_valid_zip_file() {
-            // ZipArchive::newでファイルからアーカイブを開けること
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
-
-            let file = File::open(&zip_path).unwrap();
-            let archive = ZipArchive::new(file).unwrap();
-            assert_eq!(archive.len(), 1);
-        }
-
-        #[test]
-        fn zip_archive_by_index_returns_entry() {
-            // by_indexでインデックスからエントリを取得できること
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
-
-            let file = File::open(&zip_path).unwrap();
-            let mut archive = ZipArchive::new(file).unwrap();
-            let entry = archive.by_index(0).unwrap();
-            assert_eq!(entry.name(), "a.txt");
-        }
-
-        #[test]
-        fn zip_archive_by_name_returns_entry() {
-            // by_nameで名前からエントリを取得できること
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
-
-            let file = File::open(&zip_path).unwrap();
-            let mut archive = ZipArchive::new(file).unwrap();
-            let entry = archive.by_name("a.txt").unwrap();
-            assert_eq!(entry.name(), "a.txt");
-        }
-
-        #[test]
-        fn zip_entry_provides_size_metadata() {
-            // エントリからcompressed_sizeとsizeを取得できること
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_test_zip(
-                dir.path(),
-                "test.zip",
-                &[("data.txt", b"some content here", 0o644)],
-            );
-
-            let file = File::open(&zip_path).unwrap();
-            let mut archive = ZipArchive::new(file).unwrap();
-            let entry = archive.by_index(0).unwrap();
-
-            // size()は展開後のサイズを返す
-            assert_eq!(entry.size(), 17);
-            // compressed_sizeは圧縮後のサイズ（Deflateなのでサイズは変動するが取得可能）
-            let _ = entry.compressed_size();
-        }
-
-        #[test]
-        fn zip_entry_is_dir_detects_directory_entries() {
-            // is_dir()でディレクトリエントリを判定できること
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_zip_with_directory(dir.path(), "test.zip");
-
-            let file = File::open(&zip_path).unwrap();
-            let mut archive = ZipArchive::new(file).unwrap();
-
-            // ディレクトリエントリ
-            // by_nameは&mut selfを取るため、各エントリの結果を先に取得してドロップする
-            let is_dir = archive.by_name("subdir/").unwrap().is_dir();
-            assert!(is_dir);
-
-            let is_file = !archive.by_name("subdir/file.txt").unwrap().is_dir();
-            assert!(is_file);
-        }
-
-        #[cfg(unix)]
-        #[test]
-        fn zip_entry_unix_mode_returns_permissions() {
-            // unix_mode()でパーミッション情報を取得できること
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_test_zip(
-                dir.path(),
-                "test.zip",
-                &[("exec.sh", b"#!/bin/bash", 0o755)],
-            );
-
-            let file = File::open(&zip_path).unwrap();
-            let mut archive = ZipArchive::new(file).unwrap();
-            let entry = archive.by_index(0).unwrap();
-
-            let mode = entry.unix_mode().unwrap();
-            // 下位9ビットのパーミッション部分が0o755であること
-            assert_eq!(mode & 0o777, 0o755);
-        }
-
-        #[cfg(unix)]
-        #[test]
-        fn zip_writer_start_file_overrides_file_type_bits_with_regular_file() {
-            // ZipWriter::start_file()はunix_permissions()で指定したファイルタイプビットを
-            // S_IFREG (0o100000) で上書きする。
-            // そのため、start_file()ではsymlinkエントリを作成できない。
-            // 実際のsymlinkエントリは外部ツールで作成されたZIPにのみ存在する。
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = dir.path().join("type_bits.zip");
-            let file = File::create(&zip_path).unwrap();
-            let mut writer = ZipWriter::new(file);
-
-            // S_IFLNK (0o120000) | 0o777 を設定してもstart_file()がS_IFREGで上書きする
-            let symlink_mode = 0o120000 | 0o777;
-            let options = SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Stored)
-                .unix_permissions(symlink_mode);
-            writer.start_file("link", options).unwrap();
-            writer.write_all(b"target").unwrap();
-            writer.finish().unwrap();
-
-            let file = File::open(&zip_path).unwrap();
-            let mut archive = ZipArchive::new(file).unwrap();
-            let entry = archive.by_index(0).unwrap();
-
-            let mode = entry.unix_mode().unwrap();
-            // start_file()がS_IFREG (0o100000)を自動付与することを確認
-            assert_eq!(
-                mode & 0o170000,
-                0o100000,
-                "start_file() should set S_IFREG file type bits. Got: {:#o}",
-                mode
-            );
-            // パーミッション部分は保持される
-            assert_eq!(mode & 0o777, 0o777);
-        }
-
-        #[test]
-        fn zip_archive_by_name_returns_error_for_missing_entry() {
-            // by_nameで存在しないエントリを指定するとエラーになること
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
-
-            let file = File::open(&zip_path).unwrap();
-            let mut archive = ZipArchive::new(file).unwrap();
-            let result = archive.by_name("nonexistent.txt");
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn zip_entry_supports_read_trait() {
-            // エントリからReadトレイトでデータを読み取れること
-            let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
-
-            let file = File::open(&zip_path).unwrap();
-            let mut archive = ZipArchive::new(file).unwrap();
-            let mut entry = archive.by_name("a.txt").unwrap();
-
-            let mut buf = Vec::new();
-            entry.read_to_end(&mut buf).unwrap();
-            assert_eq!(buf, b"hello");
-        }
-    }
-
     // --- ZipArchiveReaderの仕様テスト ---
     // ZipArchiveReaderが提供するscan()とextract_entry()の仕様を検証するテスト群。
 
@@ -533,6 +368,170 @@ mod tests {
                 .unwrap();
 
             assert_eq!(buf, content);
+        }
+    }
+
+    // --- zip crate API契約テスト（読み取り系） ---
+    // zip crate 8.4.0 の読み取り系APIの存在・挙動を確認するテスト群。
+    // バージョンアップ時にAPI互換性の破損を自動検出する。
+
+    mod zip_crate_read_contract {
+        use super::*;
+
+        #[test]
+        fn zip_archive_new_opens_valid_zip_file() {
+            // ZipArchive::newでファイルからアーカイブを開けること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
+
+            let file = File::open(&zip_path).unwrap();
+            let archive = ZipArchive::new(file).unwrap();
+            assert_eq!(archive.len(), 1);
+        }
+
+        #[test]
+        fn zip_archive_by_index_returns_entry() {
+            // by_indexでインデックスからエントリを取得できること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+            let entry = archive.by_index(0).unwrap();
+            assert_eq!(entry.name(), "a.txt");
+        }
+
+        #[test]
+        fn zip_archive_by_name_returns_entry() {
+            // by_nameで名前からエントリを取得できること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+            let entry = archive.by_name("a.txt").unwrap();
+            assert_eq!(entry.name(), "a.txt");
+        }
+
+        #[test]
+        fn zip_entry_provides_size_metadata() {
+            // エントリからcompressed_sizeとsizeを取得できること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(
+                dir.path(),
+                "test.zip",
+                &[("data.txt", b"some content here", 0o644)],
+            );
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+            let entry = archive.by_index(0).unwrap();
+
+            // size()は展開後のサイズを返す
+            assert_eq!(entry.size(), 17);
+            // compressed_sizeは圧縮後のサイズ（Deflateなのでサイズは変動するが取得可能）
+            let _ = entry.compressed_size();
+        }
+
+        #[test]
+        fn zip_entry_is_dir_detects_directory_entries() {
+            // is_dir()でディレクトリエントリを判定できること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_zip_with_directory(dir.path(), "test.zip");
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+
+            // by_nameは&mut selfを取るため、各エントリの結果を先に取得してドロップする
+            let is_dir = archive.by_name("subdir/").unwrap().is_dir();
+            assert!(is_dir);
+
+            let is_file = !archive.by_name("subdir/file.txt").unwrap().is_dir();
+            assert!(is_file);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn zip_entry_unix_mode_returns_permissions() {
+            // unix_mode()でパーミッション情報を取得できること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(
+                dir.path(),
+                "test.zip",
+                &[("exec.sh", b"#!/bin/bash", 0o755)],
+            );
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+            let entry = archive.by_index(0).unwrap();
+
+            let mode = entry.unix_mode().unwrap();
+            // 下位9ビットのパーミッション部分が0o755であること
+            assert_eq!(mode & 0o777, 0o755);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn zip_writer_start_file_overrides_file_type_bits_with_regular_file() {
+            // ZipWriter::start_file()はunix_permissions()で指定したファイルタイプビットを
+            // S_IFREG (0o100000) で上書きする。
+            // そのため、start_file()ではsymlinkエントリを作成できない。
+            // 実際のsymlinkエントリは外部ツールで作成されたZIPにのみ存在する。
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("type_bits.zip");
+            let file = File::create(&zip_path).unwrap();
+            let mut writer = ZipWriter::new(file);
+
+            // S_IFLNK (0o120000) | 0o777 を設定してもstart_file()がS_IFREGで上書きする
+            let symlink_mode = 0o120000 | 0o777;
+            let options = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .unix_permissions(symlink_mode);
+            writer.start_file("link", options).unwrap();
+            writer.write_all(b"target").unwrap();
+            writer.finish().unwrap();
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+            let entry = archive.by_index(0).unwrap();
+
+            let mode = entry.unix_mode().unwrap();
+            // start_file()がS_IFREG (0o100000)を自動付与することを確認
+            assert_eq!(
+                mode & 0o170000,
+                0o100000,
+                "start_file() should set S_IFREG file type bits. Got: {:#o}",
+                mode
+            );
+            // パーミッション部分は保持される
+            assert_eq!(mode & 0o777, 0o777);
+        }
+
+        #[test]
+        fn zip_archive_by_name_returns_error_for_missing_entry() {
+            // by_nameで存在しないエントリを指定するとエラーになること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+            let result = archive.by_name("nonexistent.txt");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn zip_entry_supports_read_trait() {
+            // エントリからReadトレイトでデータを読み取れること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+            let mut entry = archive.by_name("a.txt").unwrap();
+
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf).unwrap();
+            assert_eq!(buf, b"hello");
         }
     }
 }
