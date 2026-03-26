@@ -45,6 +45,7 @@ pub trait Terminal {
 
 /// ZIPアーカイブ読み取りの抽象化（2フェーズ分離設計）
 ///
+/// コンストラクタでZIPファイルを開き、アーカイブ状態を保持するステートフルなトレイト。
 /// scan（事前スキャン）とextract_entry（個別エントリ展開）を
 /// 独立したメソッドとして提供する。
 /// zipクレートなどの外部ライブラリをアダプター層で隔離するためのトレイト。
@@ -53,17 +54,12 @@ pub trait ZipReader {
     ///
     /// バリデーション（合計サイズ・ファイル数・重複検出等）のために
     /// 展開前にメタデータを取得する。
-    fn scan(&self, zip_path: &Path) -> Result<Vec<ZipEntryInfo>, ZipError>;
+    fn scan(&mut self) -> Result<Vec<ZipEntryInfo>, ZipError>;
 
     /// 指定エントリのデータを展開してwriterに書き込む
     ///
     /// 返り値は書き込んだバイト数。
-    fn extract_entry(
-        &self,
-        zip_path: &Path,
-        entry_name: &str,
-        writer: &mut dyn Write,
-    ) -> Result<u64, ZipError>;
+    fn extract_entry(&mut self, entry_name: &str, writer: &mut dyn Write) -> Result<u64, ZipError>;
 }
 
 /// ファイルシステム書き込みの抽象化
