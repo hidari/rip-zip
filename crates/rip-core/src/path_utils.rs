@@ -150,6 +150,38 @@ pub fn get_zip_path(source_dir: &Path) -> PathBuf {
     zip_path
 }
 
+/// ZIPファイルパスから展開先ディレクトリパスを決定する
+///
+/// ZIPファイル名の拡張子を除いた名前をディレクトリ名として使用する。
+/// 同名のディレクトリが既に存在する場合は連番を付与する
+/// （例: `archive (1)`, `archive (2)`）。
+/// get_zip_pathと対称的な命名規則を使用する。
+pub fn get_extract_dir(zip_path: &Path) -> PathBuf {
+    let stem = zip_path
+        .file_stem()
+        .unwrap_or_else(|| std::ffi::OsStr::new("extracted"))
+        .to_string_lossy();
+    let safe_name = sanitize_filename(&stem);
+
+    let mut extract_dir = zip_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+
+    extract_dir.push(&safe_name);
+
+    if extract_dir.exists() {
+        let base = extract_dir.clone();
+        let mut counter = 1;
+        while extract_dir.exists() {
+            extract_dir = base.with_file_name(format!("{} ({})", safe_name, counter));
+            counter += 1;
+        }
+    }
+
+    extract_dir
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,6 +642,93 @@ mod tests {
                 result.file_name().unwrap().to_str().unwrap(),
                 "my_project.zip"
             );
+        }
+    }
+
+    /// get_extract_dir の仕様
+    mod get_extract_dir {
+        use super::*;
+
+        #[test]
+        fn strips_zip_extension_for_directory_name() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("my_archive.zip");
+            std::fs::write(&zip_path, "dummy").unwrap();
+
+            let result = get_extract_dir(&zip_path);
+            assert_eq!(result.file_name().unwrap().to_str().unwrap(), "my_archive");
+        }
+
+        #[test]
+        fn places_directory_next_to_zip_file() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("test.zip");
+            std::fs::write(&zip_path, "dummy").unwrap();
+
+            let result = get_extract_dir(&zip_path);
+            assert_eq!(result.parent().unwrap(), dir.path());
+        }
+
+        #[test]
+        fn appends_counter_1_when_directory_already_exists() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("project.zip");
+            std::fs::write(&zip_path, "dummy").unwrap();
+
+            // 同名のディレクトリを作成
+            std::fs::create_dir(dir.path().join("project")).unwrap();
+
+            let result = get_extract_dir(&zip_path);
+            assert_eq!(result.file_name().unwrap().to_str().unwrap(), "project (1)");
+        }
+
+        #[test]
+        fn increments_counter_for_multiple_existing_dirs() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("docs.zip");
+            std::fs::write(&zip_path, "dummy").unwrap();
+
+            std::fs::create_dir(dir.path().join("docs")).unwrap();
+            std::fs::create_dir(dir.path().join("docs (1)")).unwrap();
+
+            let result = get_extract_dir(&zip_path);
+            assert_eq!(result.file_name().unwrap().to_str().unwrap(), "docs (2)");
+        }
+
+        #[test]
+        fn handles_zip_with_no_extension() {
+            let dir = tempfile::TempDir::new().unwrap();
+            // 拡張子なしのZIPファイル。file_stem()は"mydata"を返す
+            let zip_path = dir.path().join("mydata");
+            std::fs::write(&zip_path, "dummy").unwrap();
+
+            let result = get_extract_dir(&zip_path);
+            // "mydata"ファイルは存在するが、展開先は同名ディレクトリ
+            // ファイルも exists() で true になるため連番が付く
+            assert_eq!(result.file_name().unwrap().to_str().unwrap(), "mydata (1)");
+        }
+
+        #[test]
+        fn handles_double_extension() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = dir.path().join("archive.tar.zip");
+            std::fs::write(&zip_path, "dummy").unwrap();
+
+            let result = get_extract_dir(&zip_path);
+            // file_stemは"archive.tar"を返す
+            assert_eq!(result.file_name().unwrap().to_str().unwrap(), "archive.tar");
+        }
+
+        #[test]
+        fn returns_extracted_for_pathless_input() {
+            // file_stemがNoneの場合は"extracted"にフォールバック
+            let result = get_extract_dir(Path::new("/"));
+            assert!(result
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("extracted"));
         }
     }
 

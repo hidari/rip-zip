@@ -1,7 +1,11 @@
 use std::path::Path;
 
-use crate::config::{MAX_FILENAME_LENGTH, MAX_FILE_COUNT, MAX_FILE_SIZE, MAX_TOTAL_SIZE};
+use crate::config::{
+    MAX_COMPRESSION_RATIO, MAX_DIR_PERMISSIONS, MAX_FILENAME_LENGTH, MAX_FILE_COUNT,
+    MAX_FILE_PERMISSIONS, MAX_FILE_SIZE, MAX_TOTAL_SIZE, SETGID_BIT, SETUID_BIT, STICKY_BIT,
+};
 use crate::error::ZipError;
+use crate::types::ZipEntryInfo;
 
 /// ソースディレクトリの存在とディレクトリであることを検証する
 pub(crate) fn validate_source_dir(source_dir: &Path) -> Result<(), ZipError> {
@@ -82,6 +86,84 @@ pub(crate) fn check_total_size(
         ));
     }
     Ok(())
+}
+
+/// 圧縮比率がzip bomb疑いの閾値を超えているかチェックする
+///
+/// compressed_sizeが0の場合、uncompressed_sizeも0なら正常（空エントリ）、
+/// uncompressed_sizeが0より大きければ不審とみなす。
+// TODO: Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
+#[allow(dead_code)]
+pub(crate) fn is_suspicious_compression_ratio(compressed: u64, uncompressed: u64) -> bool {
+    if compressed == 0 {
+        return uncompressed > 0;
+    }
+    uncompressed / compressed > MAX_COMPRESSION_RATIO
+}
+
+/// パーミッションをサニタイズする
+///
+/// setuid/setgid/stickyビットを除去し、上限マスクを適用する。
+// TODO: Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
+#[allow(dead_code)]
+pub(crate) fn sanitize_permissions(permissions: u32, is_dir: bool) -> u32 {
+    // 特殊ビット（setuid, setgid, sticky）を除去
+    let without_special = permissions & !(SETUID_BIT | SETGID_BIT | STICKY_BIT);
+    // 上限マスクを適用
+    let max_perms = if is_dir {
+        MAX_DIR_PERMISSIONS
+    } else {
+        MAX_FILE_PERMISSIONS
+    };
+    without_special & max_perms
+}
+
+/// 展開対象ZIPファイルの存在と読み取り可能性を検証する
+// TODO: Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
+#[allow(dead_code)]
+pub(crate) fn validate_source_zip(zip_path: &Path) -> Result<(), ZipError> {
+    if !zip_path.exists() {
+        return Err(ZipError::Validation(format!(
+            "ZIP file does not exist: {}",
+            zip_path.display()
+        )));
+    }
+
+    if !zip_path.is_file() {
+        return Err(ZipError::Validation(format!(
+            "Not a file: {}",
+            zip_path.display()
+        )));
+    }
+
+    // 読み取り可能性はファイルを開いてみることで確認
+    std::fs::File::open(zip_path).map_err(|e| {
+        ZipError::Validation(format!(
+            "Cannot read ZIP file: {}: {}",
+            zip_path.display(),
+            e
+        ))
+    })?;
+
+    Ok(())
+}
+
+/// ZIPエントリ一覧から重複エントリ名を検出する
+///
+/// 返り値は重複しているエントリ名のリスト（ソート済み）。
+// TODO: Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
+#[allow(dead_code)]
+pub(crate) fn find_duplicate_entries(entries: &[ZipEntryInfo]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut duplicates = std::collections::HashSet::new();
+    for entry in entries {
+        if !seen.insert(&entry.name) {
+            duplicates.insert(entry.name.clone());
+        }
+    }
+    let mut result: Vec<String> = duplicates.into_iter().collect();
+    result.sort();
+    result
 }
 
 #[cfg(test)]
@@ -300,6 +382,221 @@ mod tests {
         fn does_not_skip_zero_byte_file() {
             // 0バイトファイルはスキップされない
             assert!(!should_skip_large_file(0, false));
+        }
+    }
+
+    mod compression_ratio {
+        use super::*;
+
+        #[test]
+        fn returns_false_for_normal_ratio() {
+            // 10:1の比率は正常
+            assert!(!is_suspicious_compression_ratio(100, 1000));
+        }
+
+        #[test]
+        fn returns_false_at_exact_limit_1000x() {
+            // ちょうど1000倍は不審ではない（境界値）
+            assert!(!is_suspicious_compression_ratio(1, 1000));
+        }
+
+        #[test]
+        fn returns_true_above_1000x() {
+            assert!(is_suspicious_compression_ratio(1, 1001));
+        }
+
+        #[test]
+        fn returns_true_for_extreme_ratio() {
+            // 典型的なzip bomb: 小さな圧縮サイズ、巨大な展開サイズ
+            assert!(is_suspicious_compression_ratio(1, 1_000_000));
+        }
+
+        #[test]
+        fn returns_false_for_zero_compressed_zero_uncompressed() {
+            // 空エントリ: 両方ゼロは正常
+            assert!(!is_suspicious_compression_ratio(0, 0));
+        }
+
+        #[test]
+        fn returns_true_for_zero_compressed_nonzero_uncompressed() {
+            // 圧縮サイズ0なのに展開後にコンテンツがある: 不審
+            assert!(is_suspicious_compression_ratio(0, 100));
+        }
+
+        #[test]
+        fn returns_false_for_equal_sizes() {
+            // 1:1の比率（無圧縮格納）
+            assert!(!is_suspicious_compression_ratio(1000, 1000));
+        }
+
+        #[test]
+        fn returns_false_when_compressed_larger_than_uncompressed() {
+            // 圧縮でサイズが増加するケース（小さいファイルで起こりうる）
+            assert!(!is_suspicious_compression_ratio(200, 100));
+        }
+    }
+
+    mod permissions_sanitization {
+        use super::*;
+
+        #[test]
+        fn preserves_normal_file_permissions() {
+            assert_eq!(sanitize_permissions(0o644, false), 0o644);
+        }
+
+        #[test]
+        fn preserves_normal_dir_permissions() {
+            assert_eq!(sanitize_permissions(0o755, true), 0o755);
+        }
+
+        #[test]
+        fn removes_setuid_bit() {
+            assert_eq!(sanitize_permissions(0o4755, false), 0o755);
+        }
+
+        #[test]
+        fn removes_setgid_bit() {
+            assert_eq!(sanitize_permissions(0o2755, false), 0o755);
+        }
+
+        #[test]
+        fn removes_sticky_bit() {
+            assert_eq!(sanitize_permissions(0o1755, false), 0o755);
+        }
+
+        #[test]
+        fn removes_all_special_bits_combined() {
+            assert_eq!(sanitize_permissions(0o7755, false), 0o755);
+        }
+
+        #[test]
+        fn caps_file_permissions_at_755() {
+            // 0o777はファイルの上限0o755にキャップされる
+            assert_eq!(sanitize_permissions(0o777, false), 0o755);
+        }
+
+        #[test]
+        fn caps_dir_permissions_at_755() {
+            assert_eq!(sanitize_permissions(0o777, true), 0o755);
+        }
+
+        #[test]
+        fn handles_zero_permissions() {
+            assert_eq!(sanitize_permissions(0o000, false), 0o000);
+        }
+
+        #[test]
+        fn removes_special_bits_and_caps_simultaneously() {
+            // 0o4777 -> setuid除去 -> 0o777 -> 上限0o755にキャップ
+            assert_eq!(sanitize_permissions(0o4777, false), 0o755);
+        }
+
+        #[test]
+        fn preserves_read_only_permissions() {
+            assert_eq!(sanitize_permissions(0o444, false), 0o444);
+        }
+
+        #[test]
+        fn preserves_execute_bit_within_limit() {
+            assert_eq!(sanitize_permissions(0o755, false), 0o755);
+        }
+    }
+
+    mod validate_source_zip {
+        use super::*;
+
+        #[test]
+        fn rejects_nonexistent_path() {
+            let result = validate_source_zip(Path::new("/nonexistent/path/test.zip"));
+            assert!(
+                matches!(result, Err(ZipError::Validation(msg)) if msg.contains("does not exist"))
+            );
+        }
+
+        #[test]
+        fn rejects_directory_path() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let result = validate_source_zip(dir.path());
+            assert!(matches!(result, Err(ZipError::Validation(msg)) if msg.contains("Not a file")));
+        }
+
+        #[test]
+        fn accepts_valid_file() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let file_path = dir.path().join("test.zip");
+            std::fs::write(&file_path, "dummy content").unwrap();
+            let result = validate_source_zip(&file_path);
+            assert!(result.is_ok());
+        }
+    }
+
+    mod duplicate_entries {
+        use super::*;
+
+        fn make_entry(name: &str) -> ZipEntryInfo {
+            ZipEntryInfo {
+                name: name.to_string(),
+                compressed_size: 100,
+                uncompressed_size: 200,
+                is_dir: false,
+                is_symlink: false,
+                unix_permissions: Some(0o644),
+            }
+        }
+
+        #[test]
+        fn returns_empty_for_no_duplicates() {
+            let entries = vec![
+                make_entry("a.txt"),
+                make_entry("b.txt"),
+                make_entry("c.txt"),
+            ];
+            assert!(find_duplicate_entries(&entries).is_empty());
+        }
+
+        #[test]
+        fn detects_single_duplicate() {
+            let entries = vec![
+                make_entry("a.txt"),
+                make_entry("b.txt"),
+                make_entry("a.txt"),
+            ];
+            assert_eq!(find_duplicate_entries(&entries), vec!["a.txt"]);
+        }
+
+        #[test]
+        fn detects_multiple_duplicates() {
+            let entries = vec![
+                make_entry("a.txt"),
+                make_entry("b.txt"),
+                make_entry("a.txt"),
+                make_entry("b.txt"),
+            ];
+            let result = find_duplicate_entries(&entries);
+            // ソート済みなのでa.txt, b.txtの順
+            assert_eq!(result, vec!["a.txt", "b.txt"]);
+        }
+
+        #[test]
+        fn returns_empty_for_empty_input() {
+            let entries: Vec<ZipEntryInfo> = vec![];
+            assert!(find_duplicate_entries(&entries).is_empty());
+        }
+
+        #[test]
+        fn returns_single_entry_per_duplicate_even_with_triples() {
+            let entries = vec![
+                make_entry("a.txt"),
+                make_entry("a.txt"),
+                make_entry("a.txt"),
+            ];
+            assert_eq!(find_duplicate_entries(&entries), vec!["a.txt"]);
+        }
+
+        #[test]
+        fn treats_different_paths_as_distinct() {
+            let entries = vec![make_entry("dir1/a.txt"), make_entry("dir2/a.txt")];
+            assert!(find_duplicate_entries(&entries).is_empty());
         }
     }
 
