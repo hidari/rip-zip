@@ -129,11 +129,6 @@ pub enum ZipEvent {
     FileAdded { name: String, size: u64 },
     /// シンボリックリンクがスキップされた
     SymlinkSkipped { path: PathBuf },
-    /// ファイルがスキップされた（型安全な理由付き）
-    FileSkipped {
-        name: String,
-        reason: FileSkipReason,
-    },
     /// ZIP作成が開始された
     ArchiveStarted { target: PathBuf },
     /// アーカイブの作成が完了した
@@ -152,7 +147,7 @@ pub enum ZipEvent {
         original: u32,
         sanitized: u32,
     },
-    /// エントリがスキップされた（展開時用、型安全な理由付き）
+    /// エントリがスキップされた（作成時・展開時共通、型安全な理由付き）
     EntrySkipped {
         name: String,
         reason: FileSkipReason,
@@ -461,10 +456,6 @@ mod tests {
             };
             let _ = ZipEvent::SymlinkSkipped {
                 path: PathBuf::from("/tmp/link"),
-            };
-            let _ = ZipEvent::FileSkipped {
-                name: "big.bin".to_string(),
-                reason: FileSkipReason::ExceedsFileSizeLimit,
             };
             let _ = ZipEvent::ArchiveStarted {
                 target: PathBuf::from("/tmp/out.zip"),

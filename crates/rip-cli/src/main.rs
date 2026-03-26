@@ -94,7 +94,7 @@ fn handle_event(event: ZipEvent, verbose: bool) {
                 eprintln!("Warning: Skipping symlink: {}", path.display());
             }
         }
-        ZipEvent::FileSkipped { name, reason } => {
+        ZipEvent::EntrySkipped { name, reason } => {
             // サイズ制限超過は常に表示（ユーザーが--zip64の使用を検討できるように）
             // それ以外はverbose時のみ表示
             if reason.is_always_visible() || verbose {
@@ -123,12 +123,11 @@ fn handle_event(event: ZipEvent, verbose: bool) {
                 original, sanitized
             );
         }
-        // 展開用イベントはPhase 2以降で実装する
+        // 展開用イベントはPhase 4以降で実装する
         ZipEvent::FileExtracted { .. }
         | ZipEvent::ExtractionStarted { .. }
         | ZipEvent::ExtractionCompleted { .. }
-        | ZipEvent::PermissionsSanitized { .. }
-        | ZipEvent::EntrySkipped { .. } => {}
+        | ZipEvent::PermissionsSanitized { .. } => {}
     }
 }
 
