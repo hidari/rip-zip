@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::config::MAX_CAPACITY_HINT;
 use crate::error::ZipError;
 use crate::path_utils;
 use crate::traits::{FileWriter, ZipReader};
@@ -193,7 +194,8 @@ pub fn extract_zip(
         }
 
         // k. ファイル展開
-        let mut buffer = Vec::with_capacity(entry.uncompressed_size as usize);
+        let capacity = usize::try_from(entry.uncompressed_size.min(MAX_CAPACITY_HINT)).unwrap_or(0);
+        let mut buffer = Vec::with_capacity(capacity);
         reader.extract_entry(source_zip, &entry.name, &mut buffer)?;
         let bytes_written = writer.write_file(&dest_path, &buffer, sanitized_perms)?;
 
