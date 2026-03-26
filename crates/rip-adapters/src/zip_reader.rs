@@ -93,15 +93,6 @@ mod tests {
         zip_path
     }
 
-    /// テスト用の空ZIPファイルを作成するヘルパー
-    fn create_empty_zip(dir: &Path, name: &str) -> std::path::PathBuf {
-        let zip_path = dir.join(name);
-        let file = File::create(&zip_path).unwrap();
-        let writer = ZipWriter::new(file);
-        writer.finish().unwrap();
-        zip_path
-    }
-
     /// テスト用のディレクトリエントリを含むZIPファイルを作成するヘルパー
     fn create_zip_with_directory(dir: &Path, name: &str) -> std::path::PathBuf {
         let zip_path = dir.join(name);
@@ -359,7 +350,7 @@ mod tests {
         fn returns_empty_vec_for_empty_zip() {
             // 空のZIPをスキャンすると空のVecを返すこと
             let dir = tempfile::TempDir::new().unwrap();
-            let zip_path = create_empty_zip(dir.path(), "empty.zip");
+            let zip_path = create_test_zip(dir.path(), "empty.zip", &[]);
 
             let reader = ZipArchiveReader;
             let entries = reader.scan(&zip_path).unwrap();

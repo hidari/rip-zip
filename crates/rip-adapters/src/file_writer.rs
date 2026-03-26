@@ -25,10 +25,13 @@ impl FileWriter for FsFileWriter {
         let mut file = fs::File::create(path)?;
         let bytes = io::copy(reader, &mut file)?;
 
+        // パーミッション設定はfileハンドルが有効な間に行う
+        // 注: File::set_permissionsは内部的にパスベースのため完全なfchmodではないが、
+        // fileドロップ後よりも安全
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(permissions))?;
+            file.set_permissions(fs::Permissions::from_mode(permissions))?;
         }
 
         #[cfg(not(unix))]
