@@ -14,7 +14,7 @@ use crate::validation;
 /// 副作用（ログ出力等）はon_eventコールバックで呼び出し元に委譲する。
 /// 脅威モデルで定義された7脅威すべてに対策した多層防御パイプライン。
 pub fn extract_zip(
-    reader: &dyn ZipReader,
+    reader: &mut dyn ZipReader,
     writer: &dyn FileWriter,
     source_zip: &Path,
     target_dir: &Path,
@@ -29,7 +29,7 @@ pub fn extract_zip(
     });
 
     // Phase 2: 事前スキャン
-    let entries = reader.scan(source_zip)?;
+    let entries = reader.scan()?;
 
     // ファイル数チェック（ディレクトリエントリを除外）
     let file_entry_count = entries.iter().filter(|e| !e.is_dir).count();
@@ -196,7 +196,7 @@ pub fn extract_zip(
         // k. ファイル展開
         let capacity = usize::try_from(entry.uncompressed_size.min(MAX_CAPACITY_HINT)).unwrap_or(0);
         let mut buffer = Vec::with_capacity(capacity);
-        reader.extract_entry(source_zip, &entry.name, &mut buffer)?;
+        reader.extract_entry(&entry.name, &mut buffer)?;
         let bytes_written = writer.write_file(&dest_path, &buffer, sanitized_perms)?;
 
         stats.total_size += bytes_written;
@@ -246,13 +246,12 @@ mod tests {
     }
 
     impl ZipReader for FakeZipReader {
-        fn scan(&self, _zip_path: &Path) -> Result<Vec<ZipEntryInfo>, ZipError> {
+        fn scan(&mut self) -> Result<Vec<ZipEntryInfo>, ZipError> {
             Ok(self.entries.clone())
         }
 
         fn extract_entry(
-            &self,
-            _zip_path: &Path,
+            &mut self,
             entry_name: &str,
             writer: &mut dyn Write,
         ) -> Result<u64, ZipError> {
@@ -366,11 +365,11 @@ mod tests {
 
         #[test]
         fn rejects_nonexistent_zip() {
-            let reader = FakeZipReader::new(vec![], HashMap::new());
+            let mut reader = FakeZipReader::new(vec![], HashMap::new());
             let writer = FakeFileWriter::new();
 
             let result = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 Path::new("/nonexistent/test.zip"),
                 Path::new("/tmp/output"),
@@ -392,11 +391,11 @@ mod tests {
             let (_dir, zip_path, target) = setup_test_dirs();
 
             let (entry, name, data) = make_file_entry("hello.txt", b"Hello, World!");
-            let reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
+            let mut reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
             let writer = FakeFileWriter::new();
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -422,11 +421,11 @@ mod tests {
 
             let (e1, n1, d1) = make_file_entry("file1.txt", b"aaa");
             let (e2, n2, d2) = make_file_entry("sub/file2.rs", b"bbbbb");
-            let reader = FakeZipReader::new(vec![e1, e2], HashMap::from([(n1, d1), (n2, d2)]));
+            let mut reader = FakeZipReader::new(vec![e1, e2], HashMap::from([(n1, d1), (n2, d2)]));
             let writer = FakeFileWriter::new();
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -445,12 +444,12 @@ mod tests {
 
             let dir_entry = make_dir_entry("subdir/");
             let (file_entry, name, data) = make_file_entry("subdir/file.txt", b"content");
-            let reader =
+            let mut reader =
                 FakeZipReader::new(vec![dir_entry, file_entry], HashMap::from([(name, data)]));
             let writer = FakeFileWriter::new();
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -471,11 +470,11 @@ mod tests {
         fn returns_zero_stats_for_empty_zip() {
             let (_dir, zip_path, target) = setup_test_dirs();
 
-            let reader = FakeZipReader::new(vec![], HashMap::new());
+            let mut reader = FakeZipReader::new(vec![], HashMap::new());
             let writer = FakeFileWriter::new();
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -494,11 +493,11 @@ mod tests {
             let (_dir, zip_path, target) = setup_test_dirs();
 
             let (entry, name, data) = make_file_entry("a/b/c/deep.txt", b"deep");
-            let reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
+            let mut reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
             let writer = FakeFileWriter::new();
 
             extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -530,7 +529,7 @@ mod tests {
                 unix_permissions: Some(0o644),
             };
             let (safe_entry, name, data) = make_file_entry("safe.txt", b"safe");
-            let reader = FakeZipReader::new(
+            let mut reader = FakeZipReader::new(
                 vec![traversal_entry, safe_entry],
                 HashMap::from([(name, data)]),
             );
@@ -538,7 +537,7 @@ mod tests {
             let skipped: RefCell<Vec<(String, FileSkipReason)>> = RefCell::new(Vec::new());
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -569,12 +568,12 @@ mod tests {
                 is_symlink: false,
                 unix_permissions: Some(0o644),
             };
-            let reader = FakeZipReader::new(vec![bomb_entry], HashMap::new());
+            let mut reader = FakeZipReader::new(vec![bomb_entry], HashMap::new());
             let writer = FakeFileWriter::new();
             let skipped: RefCell<Vec<FileSkipReason>> = RefCell::new(Vec::new());
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -600,11 +599,11 @@ mod tests {
 
             let symlink = make_symlink_entry("evil_link");
             let (safe, name, data) = make_file_entry("safe.txt", b"ok");
-            let reader = FakeZipReader::new(vec![symlink, safe], HashMap::from([(name, data)]));
+            let mut reader = FakeZipReader::new(vec![symlink, safe], HashMap::from([(name, data)]));
             let writer = FakeFileWriter::new();
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -630,11 +629,11 @@ mod tests {
                 is_symlink: false,
                 unix_permissions: Some(0o644),
             };
-            let reader = FakeZipReader::new(vec![long_entry], HashMap::new());
+            let mut reader = FakeZipReader::new(vec![long_entry], HashMap::new());
             let writer = FakeFileWriter::new();
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -659,11 +658,11 @@ mod tests {
                 is_symlink: false,
                 unix_permissions: Some(0o644),
             };
-            let reader = FakeZipReader::new(vec![large_entry], HashMap::new());
+            let mut reader = FakeZipReader::new(vec![large_entry], HashMap::new());
             let writer = FakeFileWriter::new();
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -682,12 +681,12 @@ mod tests {
 
             let (e1, n1, d1) = make_file_entry("dup.txt", b"first");
             let (e2, _n2, _d2) = make_file_entry("dup.txt", b"second");
-            let reader = FakeZipReader::new(vec![e1, e2], HashMap::from([(n1, d1)]));
+            let mut reader = FakeZipReader::new(vec![e1, e2], HashMap::from([(n1, d1)]));
             let writer = FakeFileWriter::new();
             let skipped: RefCell<Vec<FileSkipReason>> = RefCell::new(Vec::new());
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -719,7 +718,7 @@ mod tests {
                 is_symlink: false,
                 unix_permissions: Some(0o644),
             };
-            let reader = FakeZipReader::new(
+            let mut reader = FakeZipReader::new(
                 vec![entry],
                 HashMap::from([(entry_name.to_string(), b"data".to_vec())]),
             );
@@ -727,7 +726,7 @@ mod tests {
             let sanitized_events: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
 
             extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -769,11 +768,11 @@ mod tests {
                 })
                 .collect();
 
-            let reader = FakeZipReader::new(entries, HashMap::new());
+            let mut reader = FakeZipReader::new(entries, HashMap::new());
             let writer = FakeFileWriter::new();
 
             let result = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -795,7 +794,7 @@ mod tests {
             let (_dir, zip_path, target) = setup_test_dirs();
 
             let (entry, name, data) = make_file_entry("existing.txt", b"new");
-            let reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
+            let mut reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
 
             // 展開先に既にファイルが存在する状態をシミュレート
             let existing = target.canonicalize().unwrap().join("existing.txt");
@@ -803,7 +802,7 @@ mod tests {
             let skipped: RefCell<Vec<FileSkipReason>> = RefCell::new(Vec::new());
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -826,13 +825,13 @@ mod tests {
             let (_dir, zip_path, target) = setup_test_dirs();
 
             let (entry, name, data) = make_file_entry("existing.txt", b"new content");
-            let reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
+            let mut reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
 
             let existing = target.canonicalize().unwrap().join("existing.txt");
             let writer = FakeFileWriter::with_existing_paths(HashSet::from([existing]));
 
             let stats = extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -861,14 +860,14 @@ mod tests {
                 is_symlink: false,
                 unix_permissions: None, // Windows生成ZIPなど
             };
-            let reader = FakeZipReader::new(
+            let mut reader = FakeZipReader::new(
                 vec![entry],
                 HashMap::from([("file.txt".to_string(), b"data".to_vec())]),
             );
             let writer = FakeFileWriter::new();
 
             extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -893,7 +892,7 @@ mod tests {
                 is_symlink: false,
                 unix_permissions: Some(0o4755), // setuidビット付き
             };
-            let reader = FakeZipReader::new(
+            let mut reader = FakeZipReader::new(
                 vec![entry],
                 HashMap::from([("setuid.bin".to_string(), b"data".to_vec())]),
             );
@@ -901,7 +900,7 @@ mod tests {
             let perm_events: RefCell<Vec<(String, u32, u32)>> = RefCell::new(Vec::new());
 
             extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -941,7 +940,7 @@ mod tests {
                 is_symlink: false,
                 unix_permissions: Some(0o644),
             };
-            let reader = FakeZipReader::new(
+            let mut reader = FakeZipReader::new(
                 vec![entry],
                 HashMap::from([("safe.txt".to_string(), b"data".to_vec())]),
             );
@@ -949,7 +948,7 @@ mod tests {
             let perm_event_count: RefCell<usize> = RefCell::new(0);
 
             extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -974,13 +973,13 @@ mod tests {
             let (_dir, zip_path, target) = setup_test_dirs();
 
             let (entry, name, data) = make_file_entry("file.txt", b"data");
-            let reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
+            let mut reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
             let writer = FakeFileWriter::new();
             let started: RefCell<bool> = RefCell::new(false);
             let completed: RefCell<bool> = RefCell::new(false);
 
             extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -1003,13 +1002,13 @@ mod tests {
 
             let symlink = make_symlink_entry("link");
             let (file_entry, name, data) = make_file_entry("file.txt", b"data");
-            let reader =
+            let mut reader =
                 FakeZipReader::new(vec![symlink, file_entry], HashMap::from([(name, data)]));
             let writer = FakeFileWriter::new();
             let event_order: RefCell<Vec<String>> = RefCell::new(Vec::new());
 
             extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,
@@ -1036,12 +1035,12 @@ mod tests {
             let (_dir, zip_path, target) = setup_test_dirs();
 
             let (entry, name, data) = make_file_entry("file.txt", b"12345");
-            let reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
+            let mut reader = FakeZipReader::new(vec![entry], HashMap::from([(name, data)]));
             let writer = FakeFileWriter::new();
             let extracted: RefCell<Vec<(String, u64)>> = RefCell::new(Vec::new());
 
             extract_zip(
-                &reader,
+                &mut reader,
                 &writer,
                 &zip_path,
                 &target,

@@ -11,9 +11,21 @@ use crate::error_convert::from_zip_error;
 
 /// zipクレートを使用したZipReader実装
 ///
-/// scan（事前スキャン）とextract_entry（個別エントリ展開）を提供する。
-/// トレイト設計上、各メソッド呼び出しごとにZIPファイルを開き直す。
-pub struct ZipArchiveReader;
+/// コンストラクタでZIPファイルを開きアーカイブ状態を保持する。
+/// scan（事前スキャン）とextract_entry（個別エントリ展開）は
+/// 保持済みのアーカイブに対して操作するため、毎回のファイルオープンが不要。
+pub struct ZipArchiveReader {
+    archive: ZipArchive<File>,
+}
+
+impl ZipArchiveReader {
+    /// ZIPファイルを開いてリーダーを作成する
+    pub fn new(zip_path: &Path) -> Result<Self, ZipError> {
+        let file = File::open(zip_path)?;
+        let archive = ZipArchive::new(file).map_err(from_zip_error)?;
+        Ok(Self { archive })
+    }
+}
 
 /// unix_mode()のファイルタイプビットからシンボリックリンクかどうかを判定する
 ///
@@ -26,13 +38,10 @@ fn is_symlink_mode(mode: Option<u32>) -> bool {
 }
 
 impl ZipReader for ZipArchiveReader {
-    fn scan(&self, zip_path: &Path) -> Result<Vec<ZipEntryInfo>, ZipError> {
-        let file = File::open(zip_path)?;
-        let mut archive = ZipArchive::new(file).map_err(from_zip_error)?;
-
-        let mut entries = Vec::with_capacity(archive.len());
-        for i in 0..archive.len() {
-            let entry = archive.by_index(i).map_err(from_zip_error)?;
+    fn scan(&mut self) -> Result<Vec<ZipEntryInfo>, ZipError> {
+        let mut entries = Vec::with_capacity(self.archive.len());
+        for i in 0..self.archive.len() {
+            let entry = self.archive.by_index(i).map_err(from_zip_error)?;
             let unix_mode = entry.unix_mode();
 
             entries.push(ZipEntryInfo {
@@ -48,15 +57,8 @@ impl ZipReader for ZipArchiveReader {
         Ok(entries)
     }
 
-    fn extract_entry(
-        &self,
-        zip_path: &Path,
-        entry_name: &str,
-        writer: &mut dyn Write,
-    ) -> Result<u64, ZipError> {
-        let file = File::open(zip_path)?;
-        let mut archive = ZipArchive::new(file).map_err(from_zip_error)?;
-        let mut entry = archive.by_name(entry_name).map_err(from_zip_error)?;
+    fn extract_entry(&mut self, entry_name: &str, writer: &mut dyn Write) -> Result<u64, ZipError> {
+        let mut entry = self.archive.by_name(entry_name).map_err(from_zip_error)?;
 
         let bytes = io::copy(&mut entry, writer)?;
         Ok(bytes)
@@ -129,8 +131,8 @@ mod tests {
                 &[("hello.txt", b"hello world", 0o644)],
             );
 
-            let reader = ZipArchiveReader;
-            let entries = reader.scan(&zip_path).unwrap();
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
+            let entries = reader.scan().unwrap();
 
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].name, "hello.txt");
@@ -152,8 +154,8 @@ mod tests {
                 ],
             );
 
-            let reader = ZipArchiveReader;
-            let entries = reader.scan(&zip_path).unwrap();
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
+            let entries = reader.scan().unwrap();
 
             assert_eq!(entries.len(), 3);
             let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
@@ -168,8 +170,8 @@ mod tests {
             let dir = tempfile::TempDir::new().unwrap();
             let zip_path = create_zip_with_directory(dir.path(), "test.zip");
 
-            let reader = ZipArchiveReader;
-            let entries = reader.scan(&zip_path).unwrap();
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
+            let entries = reader.scan().unwrap();
 
             let dir_entry = entries.iter().find(|e| e.name == "subdir/").unwrap();
             assert!(dir_entry.is_dir);
@@ -187,8 +189,8 @@ mod tests {
             let dir = tempfile::TempDir::new().unwrap();
             let zip_path = create_test_zip(dir.path(), "empty.zip", &[]);
 
-            let reader = ZipArchiveReader;
-            let entries = reader.scan(&zip_path).unwrap();
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
+            let entries = reader.scan().unwrap();
             assert!(entries.is_empty());
         }
 
@@ -199,8 +201,8 @@ mod tests {
             let content = b"hello world, this is test content";
             let zip_path = create_test_zip(dir.path(), "test.zip", &[("data.txt", content, 0o644)]);
 
-            let reader = ZipArchiveReader;
-            let entries = reader.scan(&zip_path).unwrap();
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
+            let entries = reader.scan().unwrap();
 
             assert_eq!(entries[0].uncompressed_size, content.len() as u64);
         }
@@ -216,17 +218,16 @@ mod tests {
                 &[("exec.sh", b"#!/bin/bash", 0o755)],
             );
 
-            let reader = ZipArchiveReader;
-            let entries = reader.scan(&zip_path).unwrap();
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
+            let entries = reader.scan().unwrap();
 
             assert_eq!(entries[0].unix_permissions, Some(0o755));
         }
 
         #[test]
         fn returns_io_error_for_nonexistent_path() {
-            // 存在しないファイルパスを指定するとIoエラーを返すこと
-            let reader = ZipArchiveReader;
-            let result = reader.scan(Path::new("/nonexistent/path/to/file.zip"));
+            // 存在しないファイルパスを指定するとコンストラクタでIoエラーを返すこと
+            let result = ZipArchiveReader::new(Path::new("/nonexistent/path/to/file.zip"));
             assert!(result.is_err());
         }
 
@@ -238,8 +239,8 @@ mod tests {
             let zip_path =
                 create_test_zip(dir.path(), "test.zip", &[("file.txt", b"content", 0o644)]);
 
-            let reader = ZipArchiveReader;
-            let entries = reader.scan(&zip_path).unwrap();
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
+            let entries = reader.scan().unwrap();
 
             assert!(!entries[0].is_symlink);
         }
@@ -296,11 +297,9 @@ mod tests {
             let content = b"hello, extraction!";
             let zip_path = create_test_zip(dir.path(), "test.zip", &[("msg.txt", content, 0o644)]);
 
-            let reader = ZipArchiveReader;
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
             let mut buf = Vec::new();
-            reader
-                .extract_entry(&zip_path, "msg.txt", &mut buf)
-                .unwrap();
+            reader.extract_entry("msg.txt", &mut buf).unwrap();
 
             assert_eq!(buf, content);
         }
@@ -312,11 +311,9 @@ mod tests {
             let content = b"exactly 26 bytes of content";
             let zip_path = create_test_zip(dir.path(), "test.zip", &[("data.txt", content, 0o644)]);
 
-            let reader = ZipArchiveReader;
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
             let mut buf = Vec::new();
-            let bytes = reader
-                .extract_entry(&zip_path, "data.txt", &mut buf)
-                .unwrap();
+            let bytes = reader.extract_entry("data.txt", &mut buf).unwrap();
 
             assert_eq!(bytes, content.len() as u64);
         }
@@ -327,9 +324,9 @@ mod tests {
             let dir = tempfile::TempDir::new().unwrap();
             let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
 
-            let reader = ZipArchiveReader;
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
             let mut buf = Vec::new();
-            let result = reader.extract_entry(&zip_path, "nonexistent.txt", &mut buf);
+            let result = reader.extract_entry("nonexistent.txt", &mut buf);
 
             assert!(result.is_err());
         }
@@ -340,11 +337,9 @@ mod tests {
             let dir = tempfile::TempDir::new().unwrap();
             let zip_path = create_test_zip(dir.path(), "test.zip", &[("empty.txt", b"", 0o644)]);
 
-            let reader = ZipArchiveReader;
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
             let mut buf = Vec::new();
-            let bytes = reader
-                .extract_entry(&zip_path, "empty.txt", &mut buf)
-                .unwrap();
+            let bytes = reader.extract_entry("empty.txt", &mut buf).unwrap();
 
             assert_eq!(bytes, 0);
             assert!(buf.is_empty());
@@ -361,11 +356,9 @@ mod tests {
                 &[("テスト/データ.txt", content, 0o644)],
             );
 
-            let reader = ZipArchiveReader;
+            let mut reader = ZipArchiveReader::new(&zip_path).unwrap();
             let mut buf = Vec::new();
-            reader
-                .extract_entry(&zip_path, "テスト/データ.txt", &mut buf)
-                .unwrap();
+            reader.extract_entry("テスト/データ.txt", &mut buf).unwrap();
 
             assert_eq!(buf, content);
         }
@@ -532,6 +525,35 @@ mod tests {
             let mut buf = Vec::new();
             entry.read_to_end(&mut buf).unwrap();
             assert_eq!(buf, b"hello");
+        }
+
+        #[test]
+        fn zip_archive_supports_by_index_then_by_name_on_same_instance() {
+            // 同一ZipArchiveインスタンスでby_index（scan相当）の後に
+            // by_name（extract_entry相当）が正常に動作すること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(
+                dir.path(),
+                "test.zip",
+                &[("a.txt", b"hello", 0o644), ("b.txt", b"world", 0o644)],
+            );
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+
+            // by_indexで全エントリをスキャン（scan相当）
+            let mut names = Vec::new();
+            for i in 0..archive.len() {
+                let entry = archive.by_index(i).unwrap();
+                names.push(entry.name().to_string());
+            }
+            assert_eq!(names, vec!["a.txt", "b.txt"]);
+
+            // by_nameでエントリを読み取り（extract_entry相当）
+            let mut buf = Vec::new();
+            let mut entry = archive.by_name("b.txt").unwrap();
+            entry.read_to_end(&mut buf).unwrap();
+            assert_eq!(buf, b"world");
         }
     }
 }
