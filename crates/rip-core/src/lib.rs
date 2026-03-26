@@ -5,3 +5,4 @@ pub mod traits;
 pub mod types;
 pub(crate) mod validation;
 pub mod zip_creator;
+pub mod zip_extractor;

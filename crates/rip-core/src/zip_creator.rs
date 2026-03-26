@@ -44,7 +44,7 @@ pub fn create_zip(
 
         // パストラバーサル攻撃の検出
         if validation::has_path_traversal(&entry.relative_path) {
-            on_event(ZipEvent::FileSkipped {
+            on_event(ZipEvent::EntrySkipped {
                 name: entry.relative_path.display().to_string(),
                 reason: FileSkipReason::PathTraversal,
             });
@@ -68,7 +68,7 @@ pub fn create_zip(
 
         // ファイル名長チェック
         if validation::is_filename_too_long(&name) {
-            on_event(ZipEvent::FileSkipped {
+            on_event(ZipEvent::EntrySkipped {
                 name: name.clone(),
                 reason: FileSkipReason::FilenameTooLong,
             });
@@ -77,7 +77,7 @@ pub fn create_zip(
 
         // 個別ファイルサイズチェック（スキップ判定はカウント前に行う）
         if validation::should_skip_large_file(entry.size, use_zip64) {
-            on_event(ZipEvent::FileSkipped {
+            on_event(ZipEvent::EntrySkipped {
                 name: name.clone(),
                 reason: FileSkipReason::ExceedsFileSizeLimit,
             });
@@ -384,7 +384,7 @@ mod tests {
                 &dir.path().join("out.zip"),
                 false,
                 &|event| {
-                    if let ZipEvent::FileSkipped { name, reason } = event {
+                    if let ZipEvent::EntrySkipped { name, reason } = event {
                         skipped.borrow_mut().push((name, reason));
                     }
                 },
@@ -519,7 +519,7 @@ mod tests {
                 &dir.path().join("out.zip"),
                 false,
                 &|event| {
-                    if let ZipEvent::FileSkipped { reason, .. } = event {
+                    if let ZipEvent::EntrySkipped { reason, .. } = event {
                         skipped_reasons.borrow_mut().push(reason);
                     }
                 },
@@ -701,7 +701,7 @@ mod tests {
 
         #[test]
         fn emits_file_skipped_event_with_reason_for_large_file() {
-            // 1GB超ファイルスキップ時にFileSkippedイベントに正しい理由が含まれることを検証
+            // 1GB超ファイルスキップ時にEntrySkippedイベントに正しい理由が含まれることを検証
             let dir = tempfile::TempDir::new().unwrap();
             let source = dir.path().join("src");
             std::fs::create_dir(&source).unwrap();
@@ -717,7 +717,7 @@ mod tests {
                 &dir.path().join("out.zip"),
                 false,
                 &|event| {
-                    if let ZipEvent::FileSkipped { reason, .. } = event {
+                    if let ZipEvent::EntrySkipped { reason, .. } = event {
                         skipped_reasons.borrow_mut().push(reason);
                     }
                 },
