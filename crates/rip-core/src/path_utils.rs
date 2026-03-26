@@ -119,6 +119,24 @@ pub fn sanitize_zip_entry_path(path: &str) -> String {
     }
 }
 
+/// 競合しないパスを返す共通ロジック
+///
+/// 初期パスが既に存在する場合、連番付きの候補を生成して
+/// 競合しないパスを見つけるまでループする。
+fn resolve_non_conflicting_path(initial: PathBuf, format_fn: impl Fn(usize) -> PathBuf) -> PathBuf {
+    if !initial.exists() {
+        return initial;
+    }
+    let mut counter = 1;
+    loop {
+        let candidate = format_fn(counter);
+        if !candidate.exists() {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
 /// ソースディレクトリから出力ZIPファイルのパスを決定する
 ///
 /// ディレクトリ名をサニタイズし、同名のZIPファイルが既に存在する場合は
@@ -130,24 +148,15 @@ pub fn get_zip_path(source_dir: &Path) -> PathBuf {
         .to_string_lossy();
     let safe_name = sanitize_filename(&dir_name);
 
-    let mut zip_path = source_dir
+    let parent = source_dir
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
 
-    zip_path.push(format!("{}.zip", safe_name));
-
-    // 同名のZIPファイルが存在する場合は連番を付ける
-    if zip_path.exists() {
-        let base = zip_path.clone();
-        let mut counter = 1;
-        while zip_path.exists() {
-            zip_path = base.with_file_name(format!("{} ({}).zip", safe_name, counter));
-            counter += 1;
-        }
-    }
-
-    zip_path
+    let initial = parent.join(format!("{}.zip", safe_name));
+    resolve_non_conflicting_path(initial, |n| {
+        parent.join(format!("{} ({}).zip", safe_name, n))
+    })
 }
 
 /// ZIPファイルパスから展開先ディレクトリパスを決定する
@@ -163,23 +172,13 @@ pub fn get_extract_dir(zip_path: &Path) -> PathBuf {
         .to_string_lossy();
     let safe_name = sanitize_filename(&stem);
 
-    let mut extract_dir = zip_path
+    let parent = zip_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
 
-    extract_dir.push(&safe_name);
-
-    if extract_dir.exists() {
-        let base = extract_dir.clone();
-        let mut counter = 1;
-        while extract_dir.exists() {
-            extract_dir = base.with_file_name(format!("{} ({})", safe_name, counter));
-            counter += 1;
-        }
-    }
-
-    extract_dir
+    let initial = parent.join(&safe_name);
+    resolve_non_conflicting_path(initial, |n| parent.join(format!("{} ({})", safe_name, n)))
 }
 
 #[cfg(test)]

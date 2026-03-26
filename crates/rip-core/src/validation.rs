@@ -92,19 +92,23 @@ pub(crate) fn check_total_size(
 ///
 /// compressed_sizeが0の場合、uncompressed_sizeも0なら正常（空エントリ）、
 /// uncompressed_sizeが0より大きければ不審とみなす。
-// TODO: Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
+// TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
 #[allow(dead_code)]
 pub(crate) fn is_suspicious_compression_ratio(compressed: u64, uncompressed: u64) -> bool {
     if compressed == 0 {
         return uncompressed > 0;
     }
-    uncompressed / compressed > MAX_COMPRESSION_RATIO
+    // 整数除算の切り捨てによる閾値付近のzip bomb見逃しを防ぐため、
+    // 乗算で比較する。オーバーフロー時はfalse（閾値が天文学的に大きい）
+    compressed
+        .checked_mul(MAX_COMPRESSION_RATIO)
+        .is_some_and(|threshold| uncompressed > threshold)
 }
 
 /// パーミッションをサニタイズする
 ///
 /// setuid/setgid/stickyビットを除去し、上限マスクを適用する。
-// TODO: Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
+// TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
 #[allow(dead_code)]
 pub(crate) fn sanitize_permissions(permissions: u32, is_dir: bool) -> u32 {
     // 特殊ビット（setuid, setgid, sticky）を除去
@@ -119,16 +123,25 @@ pub(crate) fn sanitize_permissions(permissions: u32, is_dir: bool) -> u32 {
 }
 
 /// 展開対象ZIPファイルの存在と読み取り可能性を検証する
-// TODO: Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
+///
+/// TOCTOU回避のため、File::openを一回だけ呼び、エラー種別から
+/// ユーザーフレンドリーなメッセージを生成する。
+// TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
 #[allow(dead_code)]
 pub(crate) fn validate_source_zip(zip_path: &Path) -> Result<(), ZipError> {
-    if !zip_path.exists() {
-        return Err(ZipError::Validation(format!(
-            "ZIP file does not exist: {}",
-            zip_path.display()
-        )));
-    }
+    // openでまず読み取り可能性を確認
+    std::fs::File::open(zip_path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            ZipError::Validation(format!("ZIP file does not exist: {}", zip_path.display()))
+        }
+        _ => ZipError::Validation(format!(
+            "Cannot read ZIP file: {}: {}",
+            zip_path.display(),
+            e
+        )),
+    })?;
 
+    // openが成功してもディレクトリの場合がある（Unixではディレクトリもopen可能）
     if !zip_path.is_file() {
         return Err(ZipError::Validation(format!(
             "Not a file: {}",
@@ -136,22 +149,13 @@ pub(crate) fn validate_source_zip(zip_path: &Path) -> Result<(), ZipError> {
         )));
     }
 
-    // 読み取り可能性はファイルを開いてみることで確認
-    std::fs::File::open(zip_path).map_err(|e| {
-        ZipError::Validation(format!(
-            "Cannot read ZIP file: {}: {}",
-            zip_path.display(),
-            e
-        ))
-    })?;
-
     Ok(())
 }
 
 /// ZIPエントリ一覧から重複エントリ名を検出する
 ///
 /// 返り値は重複しているエントリ名のリスト（ソート済み）。
-// TODO: Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
+// TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
 #[allow(dead_code)]
 pub(crate) fn find_duplicate_entries(entries: &[ZipEntryInfo]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
@@ -433,6 +437,19 @@ mod tests {
         fn returns_false_when_compressed_larger_than_uncompressed() {
             // 圧縮でサイズが増加するケース（小さいファイルで起こりうる）
             assert!(!is_suspicious_compression_ratio(200, 100));
+        }
+
+        #[test]
+        fn detects_fractional_ratio_above_threshold() {
+            // 2001/2 = 1000.5倍。整数除算では1000に切り捨てられ見逃すケース
+            // 乗算比較により正しく検出される
+            assert!(is_suspicious_compression_ratio(2, 2001));
+        }
+
+        #[test]
+        fn returns_false_when_checked_mul_overflows() {
+            // compressed * 1000がu64をオーバーフローする場合はfalse
+            assert!(!is_suspicious_compression_ratio(u64::MAX, u64::MAX));
         }
     }
 
