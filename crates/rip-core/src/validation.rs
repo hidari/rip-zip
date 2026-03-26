@@ -124,30 +124,34 @@ pub(crate) fn sanitize_permissions(permissions: u32, is_dir: bool) -> u32 {
 
 /// 展開対象ZIPファイルの存在と読み取り可能性を検証する
 ///
-/// TOCTOU回避のため、File::openを一回だけ呼び、エラー種別から
-/// ユーザーフレンドリーなメッセージを生成する。
+/// 存在確認・ファイル種別確認の後、File::openで読み取り可能性を検証する。
+/// Windowsではディレクトリに対するFile::openが失敗するため、
+/// is_file()チェックをopen前に行いクロスプラットフォームで一貫したエラーを返す。
 // TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
 #[allow(dead_code)]
 pub(crate) fn validate_source_zip(zip_path: &Path) -> Result<(), ZipError> {
-    // openでまず読み取り可能性を確認
-    std::fs::File::open(zip_path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => {
-            ZipError::Validation(format!("ZIP file does not exist: {}", zip_path.display()))
-        }
-        _ => ZipError::Validation(format!(
-            "Cannot read ZIP file: {}: {}",
-            zip_path.display(),
-            e
-        )),
-    })?;
+    if !zip_path.exists() {
+        return Err(ZipError::Validation(format!(
+            "ZIP file does not exist: {}",
+            zip_path.display()
+        )));
+    }
 
-    // openが成功してもディレクトリの場合がある（Unixではディレクトリもopen可能）
     if !zip_path.is_file() {
         return Err(ZipError::Validation(format!(
             "Not a file: {}",
             zip_path.display()
         )));
     }
+
+    // 読み取り可能性をFile::openで確認
+    std::fs::File::open(zip_path).map_err(|e| {
+        ZipError::Validation(format!(
+            "Cannot read ZIP file: {}: {}",
+            zip_path.display(),
+            e
+        ))
+    })?;
 
     Ok(())
 }
