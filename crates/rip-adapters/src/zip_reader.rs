@@ -21,7 +21,22 @@ pub struct ZipArchiveReader {
 
 impl ZipArchiveReader {
     /// ZIPファイルを開いてリーダーを作成する
+    ///
+    /// パスの存在とファイル種別を検証してからアーカイブを開く。
+    /// 検証失敗時はZipError::Validationを返す。
     pub fn new(zip_path: &Path) -> Result<Self, ZipError> {
+        if !zip_path.exists() {
+            return Err(ZipError::Validation(format!(
+                "ZIP file does not exist: {}",
+                zip_path.display()
+            )));
+        }
+        if !zip_path.is_file() {
+            return Err(ZipError::Validation(format!(
+                "Not a file: {}",
+                zip_path.display()
+            )));
+        }
         let file = File::open(zip_path)?;
         let archive = ZipArchive::new(file).map_err(from_zip_error)?;
         Ok(Self {
@@ -233,10 +248,20 @@ mod tests {
         }
 
         #[test]
-        fn returns_io_error_for_nonexistent_path() {
-            // 存在しないファイルパスを指定するとコンストラクタでIoエラーを返すこと
+        fn returns_validation_error_for_nonexistent_path() {
+            // 存在しないファイルパスを指定するとValidationエラーを返すこと
             let result = ZipArchiveReader::new(Path::new("/nonexistent/path/to/file.zip"));
-            assert!(result.is_err());
+            assert!(
+                matches!(result, Err(ZipError::Validation(msg)) if msg.contains("does not exist"))
+            );
+        }
+
+        #[test]
+        fn returns_validation_error_for_directory_path() {
+            // ディレクトリパスを指定するとValidationエラーを返すこと
+            let dir = tempfile::TempDir::new().unwrap();
+            let result = ZipArchiveReader::new(dir.path());
+            assert!(matches!(result, Err(ZipError::Validation(msg)) if msg.contains("Not a file")));
         }
 
         #[test]
