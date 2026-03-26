@@ -118,38 +118,6 @@ pub(crate) fn sanitize_permissions(permissions: u32, is_dir: bool) -> u32 {
     without_special & max_perms
 }
 
-/// 展開対象ZIPファイルの存在と読み取り可能性を検証する
-///
-/// 存在確認・ファイル種別確認の後、File::openで読み取り可能性を検証する。
-/// Windowsではディレクトリに対するFile::openが失敗するため、
-/// is_file()チェックをopen前に行いクロスプラットフォームで一貫したエラーを返す。
-pub(crate) fn validate_source_zip(zip_path: &Path) -> Result<(), ZipError> {
-    if !zip_path.exists() {
-        return Err(ZipError::Validation(format!(
-            "ZIP file does not exist: {}",
-            zip_path.display()
-        )));
-    }
-
-    if !zip_path.is_file() {
-        return Err(ZipError::Validation(format!(
-            "Not a file: {}",
-            zip_path.display()
-        )));
-    }
-
-    // 読み取り可能性をFile::openで確認
-    std::fs::File::open(zip_path).map_err(|e| {
-        ZipError::Validation(format!(
-            "Cannot read ZIP file: {}: {}",
-            zip_path.display(),
-            e
-        ))
-    })?;
-
-    Ok(())
-}
-
 /// ZIPエントリ一覧から重複エントリ名を検出する
 ///
 /// 返り値は重複しているエントリ名のリスト（ソート済み）。
@@ -515,34 +483,6 @@ mod tests {
         #[test]
         fn preserves_execute_bit_within_limit() {
             assert_eq!(sanitize_permissions(0o755, false), 0o755);
-        }
-    }
-
-    mod validate_source_zip {
-        use super::*;
-
-        #[test]
-        fn rejects_nonexistent_path() {
-            let result = validate_source_zip(Path::new("/nonexistent/path/test.zip"));
-            assert!(
-                matches!(result, Err(ZipError::Validation(msg)) if msg.contains("does not exist"))
-            );
-        }
-
-        #[test]
-        fn rejects_directory_path() {
-            let dir = tempfile::TempDir::new().unwrap();
-            let result = validate_source_zip(dir.path());
-            assert!(matches!(result, Err(ZipError::Validation(msg)) if msg.contains("Not a file")));
-        }
-
-        #[test]
-        fn accepts_valid_file() {
-            let dir = tempfile::TempDir::new().unwrap();
-            let file_path = dir.path().join("test.zip");
-            std::fs::write(&file_path, "dummy content").unwrap();
-            let result = validate_source_zip(&file_path);
-            assert!(result.is_ok());
         }
     }
 

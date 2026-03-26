@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rip_core::error::ZipError;
 use rip_core::traits::ZipReader;
@@ -16,14 +16,33 @@ use crate::error_convert::from_zip_error;
 /// 保持済みのアーカイブに対して操作するため、毎回のファイルオープンが不要。
 pub struct ZipArchiveReader {
     archive: ZipArchive<File>,
+    path: PathBuf,
 }
 
 impl ZipArchiveReader {
     /// ZIPファイルを開いてリーダーを作成する
+    ///
+    /// パスの存在とファイル種別を検証してからアーカイブを開く。
+    /// 検証失敗時はZipError::Validationを返す。
     pub fn new(zip_path: &Path) -> Result<Self, ZipError> {
+        if !zip_path.exists() {
+            return Err(ZipError::Validation(format!(
+                "ZIP file does not exist: {}",
+                zip_path.display()
+            )));
+        }
+        if !zip_path.is_file() {
+            return Err(ZipError::Validation(format!(
+                "Not a file: {}",
+                zip_path.display()
+            )));
+        }
         let file = File::open(zip_path)?;
         let archive = ZipArchive::new(file).map_err(from_zip_error)?;
-        Ok(Self { archive })
+        Ok(Self {
+            archive,
+            path: zip_path.to_path_buf(),
+        })
     }
 }
 
@@ -38,6 +57,10 @@ fn is_symlink_mode(mode: Option<u32>) -> bool {
 }
 
 impl ZipReader for ZipArchiveReader {
+    fn source_path(&self) -> &Path {
+        &self.path
+    }
+
     fn scan(&mut self) -> Result<Vec<ZipEntryInfo>, ZipError> {
         let mut entries = Vec::with_capacity(self.archive.len());
         for i in 0..self.archive.len() {
@@ -225,10 +248,20 @@ mod tests {
         }
 
         #[test]
-        fn returns_io_error_for_nonexistent_path() {
-            // 存在しないファイルパスを指定するとコンストラクタでIoエラーを返すこと
+        fn returns_validation_error_for_nonexistent_path() {
+            // 存在しないファイルパスを指定するとValidationエラーを返すこと
             let result = ZipArchiveReader::new(Path::new("/nonexistent/path/to/file.zip"));
-            assert!(result.is_err());
+            assert!(
+                matches!(result, Err(ZipError::Validation(msg)) if msg.contains("does not exist"))
+            );
+        }
+
+        #[test]
+        fn returns_validation_error_for_directory_path() {
+            // ディレクトリパスを指定するとValidationエラーを返すこと
+            let dir = tempfile::TempDir::new().unwrap();
+            let result = ZipArchiveReader::new(dir.path());
+            assert!(matches!(result, Err(ZipError::Validation(msg)) if msg.contains("Not a file")));
         }
 
         #[test]
@@ -284,6 +317,20 @@ mod tests {
         fn returns_false_for_zero() {
             // 0の場合はfalseを返すこと（ファイルタイプビットが未設定）
             assert!(!is_symlink_mode(Some(0)));
+        }
+    }
+
+    mod source_path {
+        use super::*;
+
+        #[test]
+        fn returns_the_path_used_to_create_reader() {
+            // コンストラクタに渡したパスがsource_path()で取得できること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(dir.path(), "test.zip", &[("a.txt", b"hello", 0o644)]);
+
+            let reader = ZipArchiveReader::new(&zip_path).unwrap();
+            assert_eq!(reader.source_path(), &zip_path);
         }
     }
 
