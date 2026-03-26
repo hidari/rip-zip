@@ -113,8 +113,9 @@ pub fn extract_zip(
             continue;
         }
 
-        // 重複エントリチェック（事前スキャンで検出された重複の2回目以降をスキップ）
-        if duplicate_set.contains(entry.name.as_str()) && !seen_names.insert(sanitized_name.clone())
+        // 重複エントリチェック（同名エントリの2回目以降をスキップ）
+        if duplicate_set.contains(sanitized_name.as_str())
+            && !seen_names.insert(sanitized_name.clone())
         {
             on_event(ZipEvent::EntrySkipped {
                 name: sanitized_name,
@@ -123,16 +124,16 @@ pub fn extract_zip(
             stats.skipped_count += 1;
             continue;
         }
-        // 重複でない場合もseen_namesに追加
-        if !duplicate_set.contains(entry.name.as_str()) {
-            seen_names.insert(sanitized_name.clone());
-        }
 
         // h. 展開先パスのセキュリティチェック
         let dest_path = base_dir.join(&sanitized_name);
 
-        // prefix チェック（主防御）
+        // prefix チェック: base_dir外への書き込みを防止する主防御ライン
         if !dest_path.starts_with(&base_dir) {
+            on_event(ZipEvent::EntrySkipped {
+                name: sanitized_name,
+                reason: FileSkipReason::PathTraversal,
+            });
             stats.skipped_count += 1;
             continue;
         }
@@ -141,9 +142,13 @@ pub fn extract_zip(
         if entry.is_dir {
             writer.create_dir_all(&dest_path)?;
 
-            // canonicalizeによる最終確認（symlink防御）
+            // canonicalize: symlink経由でbase_dir外に脱出していないか最終確認
             if let Ok(canonical) = dest_path.canonicalize() {
                 if !canonical.starts_with(&base_dir) {
+                    on_event(ZipEvent::EntrySkipped {
+                        name: sanitized_name,
+                        reason: FileSkipReason::PathTraversal,
+                    });
                     stats.skipped_count += 1;
                     continue;
                 }
@@ -155,9 +160,13 @@ pub fn extract_zip(
         if let Some(parent) = dest_path.parent() {
             writer.create_dir_all(parent)?;
 
-            // canonicalizeによる最終確認（symlink防御）
+            // canonicalize: symlink経由でbase_dir外に脱出していないか最終確認
             if let Ok(canonical_parent) = parent.canonicalize() {
                 if !canonical_parent.starts_with(&base_dir) {
+                    on_event(ZipEvent::EntrySkipped {
+                        name: sanitized_name,
+                        reason: FileSkipReason::PathTraversal,
+                    });
                     stats.skipped_count += 1;
                     continue;
                 }
@@ -174,10 +183,9 @@ pub fn extract_zip(
             continue;
         }
 
-        // j. パーミッション検証・マスク適用
-        let default_perms = if entry.is_dir { 0o755 } else { 0o644 };
-        let raw_perms = entry.unix_permissions.unwrap_or(default_perms);
-        let sanitized_perms = validation::sanitize_permissions(raw_perms, entry.is_dir);
+        // j. パーミッション検証・マスク適用（ここに到達するのはファイルエントリのみ）
+        let raw_perms = entry.unix_permissions.unwrap_or(0o644);
+        let sanitized_perms = validation::sanitize_permissions(raw_perms, false);
 
         if sanitized_perms != raw_perms {
             on_event(ZipEvent::PermissionsSanitized {
@@ -187,17 +195,15 @@ pub fn extract_zip(
             });
         }
 
-        // k. ファイル展開（Vec<u8> + Cursorでブリッジ）
-        let mut buffer = Vec::new();
+        // k. ファイル展開（ZipReader::extract_entry(Write) → FileWriter::write_file(Read)をブリッジ）
+        let mut buffer = Vec::with_capacity(entry.uncompressed_size as usize);
         reader.extract_entry(source_zip, &entry.name, &mut buffer)?;
         let mut cursor = Cursor::new(buffer);
         let bytes_written = writer.write_file(&dest_path, &mut cursor, sanitized_perms)?;
 
-        // l. 累計サイズ更新
         stats.total_size += bytes_written;
         stats.file_count += 1;
 
-        // m. イベント通知
         on_event(ZipEvent::FileExtracted {
             name: sanitized_name,
             size: bytes_written,
