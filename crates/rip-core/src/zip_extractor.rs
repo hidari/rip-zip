@@ -514,9 +514,10 @@ mod tests {
             )
             .unwrap();
 
-            // 親ディレクトリ "a/b/c" が作成されている
+            // 親ディレクトリ "a/b/c" が作成されている（Windowsではパス区切りが\になる）
             let dirs = writer.dirs_created.borrow();
-            assert!(dirs.iter().any(|d| d.to_string_lossy().contains("a/b/c")));
+            let expected_suffix: PathBuf = ["a", "b", "c"].iter().collect();
+            assert!(dirs.iter().any(|d| d.ends_with(&expected_suffix)));
         }
     }
 
