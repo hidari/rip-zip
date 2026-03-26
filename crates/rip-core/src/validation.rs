@@ -92,8 +92,6 @@ pub(crate) fn check_total_size(
 ///
 /// compressed_sizeが0の場合、uncompressed_sizeも0なら正常（空エントリ）、
 /// uncompressed_sizeが0より大きければ不審とみなす。
-// TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
-#[allow(dead_code)]
 pub(crate) fn is_suspicious_compression_ratio(compressed: u64, uncompressed: u64) -> bool {
     if compressed == 0 {
         return uncompressed > 0;
@@ -108,8 +106,6 @@ pub(crate) fn is_suspicious_compression_ratio(compressed: u64, uncompressed: u64
 /// パーミッションをサニタイズする
 ///
 /// setuid/setgid/stickyビットを除去し、上限マスクを適用する。
-// TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
-#[allow(dead_code)]
 pub(crate) fn sanitize_permissions(permissions: u32, is_dir: bool) -> u32 {
     // 特殊ビット（setuid, setgid, sticky）を除去
     let without_special = permissions & !(SETUID_BIT | SETGID_BIT | STICKY_BIT);
@@ -127,8 +123,6 @@ pub(crate) fn sanitize_permissions(permissions: u32, is_dir: bool) -> u32 {
 /// 存在確認・ファイル種別確認の後、File::openで読み取り可能性を検証する。
 /// Windowsではディレクトリに対するFile::openが失敗するため、
 /// is_file()チェックをopen前に行いクロスプラットフォームで一貫したエラーを返す。
-// TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
-#[allow(dead_code)]
 pub(crate) fn validate_source_zip(zip_path: &Path) -> Result<(), ZipError> {
     if !zip_path.exists() {
         return Err(ZipError::Validation(format!(
@@ -159,8 +153,6 @@ pub(crate) fn validate_source_zip(zip_path: &Path) -> Result<(), ZipError> {
 /// ZIPエントリ一覧から重複エントリ名を検出する
 ///
 /// 返り値は重複しているエントリ名のリスト（ソート済み）。
-// TODO(#31): Phase 2のzip_extractorで使用予定。消費者実装後にallow(dead_code)を除去する。
-#[allow(dead_code)]
 pub(crate) fn find_duplicate_entries(entries: &[ZipEntryInfo]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut duplicates = std::collections::HashSet::new();
