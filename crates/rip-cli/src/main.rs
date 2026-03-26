@@ -123,6 +123,12 @@ fn handle_event(event: ZipEvent, verbose: bool) {
                 original, sanitized
             );
         }
+        // 展開用イベントはPhase 2以降で実装する
+        ZipEvent::FileExtracted { .. }
+        | ZipEvent::ExtractionStarted { .. }
+        | ZipEvent::ExtractionCompleted { .. }
+        | ZipEvent::PermissionsSanitized { .. }
+        | ZipEvent::EntrySkipped { .. } => {}
     }
 }
 

@@ -1,7 +1,8 @@
+use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::error::ZipError;
-use crate::types::FileEntry;
+use crate::types::{FileEntry, ZipEntryInfo};
 
 /// ファイルシステム走査の抽象化
 ///
@@ -40,4 +41,52 @@ pub trait ZipArchiver {
 pub trait Terminal {
     /// 標準入力がターミナルに接続されているかを判定する
     fn is_stdin_terminal(&self) -> bool;
+}
+
+/// ZIPアーカイブ読み取りの抽象化（2フェーズ分離設計）
+///
+/// scan（事前スキャン）とextract_entry（個別エントリ展開）を
+/// 独立したメソッドとして提供する。
+/// zipクレートなどの外部ライブラリをアダプター層で隔離するためのトレイト。
+pub trait ZipReader {
+    /// ZIPアーカイブ内のエントリ一覧を事前スキャンする
+    ///
+    /// バリデーション（合計サイズ・ファイル数・重複検出等）のために
+    /// 展開前にメタデータを取得する。
+    fn scan(&self, zip_path: &Path) -> Result<Vec<ZipEntryInfo>, ZipError>;
+
+    /// 指定エントリのデータを展開してwriterに書き込む
+    ///
+    /// 返り値は書き込んだバイト数。
+    fn extract_entry(
+        &self,
+        zip_path: &Path,
+        entry_name: &str,
+        writer: &mut dyn Write,
+    ) -> Result<u64, ZipError>;
+}
+
+/// ファイルシステム書き込みの抽象化
+///
+/// 展開時のファイルシステム操作をアダプター層で隔離するためのトレイト。
+/// テスト時にはFake実装に差し替えて安全にテストする。
+pub trait FileWriter {
+    /// ディレクトリを再帰的に作成する
+    fn create_dir_all(&self, path: &Path) -> Result<(), ZipError>;
+
+    /// ファイルを書き込む（readerからデータを読み取り、パーミッションを設定）
+    ///
+    /// 返り値は書き込んだバイト数。
+    fn write_file(
+        &self,
+        path: &Path,
+        reader: &mut dyn Read,
+        permissions: u32,
+    ) -> Result<u64, ZipError>;
+
+    /// パスが存在するかを判定する
+    fn exists(&self, path: &Path) -> bool;
+
+    /// パスがシンボリックリンクかを判定する
+    fn is_symlink(&self, path: &Path) -> bool;
 }
