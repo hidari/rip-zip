@@ -153,6 +153,9 @@ pub(crate) fn validate_source_zip(zip_path: &Path) -> Result<(), ZipError> {
 /// ZIPエントリ一覧から重複エントリ名を検出する
 ///
 /// 返り値は重複しているエントリ名のリスト（ソート済み）。
+/// zip_extractorではsanitize後の名前衝突もカバーするためseen_namesで検出するが、
+/// CLI層での事前警告表示などに利用可能。
+#[allow(dead_code)]
 pub(crate) fn find_duplicate_entries(entries: &[ZipEntryInfo]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut duplicates = std::collections::HashSet::new();

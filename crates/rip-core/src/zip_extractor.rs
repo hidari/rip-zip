@@ -31,16 +31,13 @@ pub fn extract_zip(
     // Phase 2: 事前スキャン
     let entries = reader.scan(source_zip)?;
 
-    // ファイル数チェック
-    validation::check_file_count(entries.len())?;
+    // ファイル数チェック（ディレクトリエントリを除外）
+    let file_entry_count = entries.iter().filter(|e| !e.is_dir).count();
+    validation::check_file_count(file_entry_count)?;
 
     // 合計展開サイズの概算チェック（zip bomb早期検出）
     let total_uncompressed: u64 = entries.iter().map(|e| e.uncompressed_size).sum();
     validation::check_total_size(0, total_uncompressed, false)?;
-
-    // 重複エントリ検出
-    let duplicates = validation::find_duplicate_entries(&entries);
-    let duplicate_set: HashSet<&str> = duplicates.iter().map(|s| s.as_str()).collect();
 
     // 展開先ディレクトリの作成とcanonicalizeによるbase_dir確定
     writer.create_dir_all(target_dir)?;
@@ -113,10 +110,9 @@ pub fn extract_zip(
             continue;
         }
 
-        // 重複エントリチェック（同名エントリの2回目以降をスキップ）
-        if duplicate_set.contains(sanitized_name.as_str())
-            && !seen_names.insert(sanitized_name.clone())
-        {
+        // 重複チェック: sanitize後の名前が既出なら2回目以降をスキップ
+        // （raw nameの重複だけでなく、sanitize結果の衝突も検出する）
+        if !seen_names.insert(sanitized_name.clone()) {
             on_event(ZipEvent::EntrySkipped {
                 name: sanitized_name,
                 reason: FileSkipReason::DuplicateEntry,
@@ -143,6 +139,8 @@ pub fn extract_zip(
             writer.create_dir_all(&dest_path)?;
 
             // canonicalize: symlink経由でbase_dir外に脱出していないか最終確認
+            // Err = パスが存在しない（Fakeテストやレースコンディション）→ チェック不可だが安全上の脅威ではない
+            // Ok(path) で base_dir 外 = symlink攻撃 → スキップ
             if let Ok(canonical) = dest_path.canonicalize() {
                 if !canonical.starts_with(&base_dir) {
                     on_event(ZipEvent::EntrySkipped {
@@ -203,6 +201,9 @@ pub fn extract_zip(
 
         stats.total_size += bytes_written;
         stats.file_count += 1;
+
+        // 展開済みバイト数の逐次チェック（ZIPヘッダのサイズ詐称への多層防御）
+        validation::check_total_size(stats.total_size, 0, false)?;
 
         on_event(ZipEvent::FileExtracted {
             name: sanitized_name,
