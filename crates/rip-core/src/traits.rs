@@ -58,6 +58,8 @@ pub trait ZipReader {
 
     /// 指定エントリのデータを展開してwriterに書き込む
     ///
+    /// entry_nameにはscan()が返したZipEntryInfo::nameの生の値を渡すこと。
+    /// サニタイズ後の名前ではアーカイブ内のエントリと一致しない場合がある。
     /// 返り値は書き込んだバイト数。
     fn extract_entry(&mut self, entry_name: &str, writer: &mut dyn Write) -> Result<u64, ZipError>;
 }

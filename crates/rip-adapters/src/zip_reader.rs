@@ -526,5 +526,34 @@ mod tests {
             entry.read_to_end(&mut buf).unwrap();
             assert_eq!(buf, b"hello");
         }
+
+        #[test]
+        fn zip_archive_supports_by_index_then_by_name_on_same_instance() {
+            // 同一ZipArchiveインスタンスでby_index（scan相当）の後に
+            // by_name（extract_entry相当）が正常に動作すること
+            let dir = tempfile::TempDir::new().unwrap();
+            let zip_path = create_test_zip(
+                dir.path(),
+                "test.zip",
+                &[("a.txt", b"hello", 0o644), ("b.txt", b"world", 0o644)],
+            );
+
+            let file = File::open(&zip_path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+
+            // by_indexで全エントリをスキャン（scan相当）
+            let mut names = Vec::new();
+            for i in 0..archive.len() {
+                let entry = archive.by_index(i).unwrap();
+                names.push(entry.name().to_string());
+            }
+            assert_eq!(names, vec!["a.txt", "b.txt"]);
+
+            // by_nameでエントリを読み取り（extract_entry相当）
+            let mut buf = Vec::new();
+            let mut entry = archive.by_name("b.txt").unwrap();
+            entry.read_to_end(&mut buf).unwrap();
+            assert_eq!(buf, b"world");
+        }
     }
 }
