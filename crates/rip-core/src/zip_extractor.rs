@@ -20,7 +20,7 @@ pub fn extract_zip(
     options: &ExtractOptions,
     on_event: &dyn Fn(ZipEvent),
 ) -> Result<ExtractStats, ZipError> {
-    // Phase 1: イベント通知（ソースパスはリーダーから取得）
+    // Phase 1: 展開開始通知
     on_event(ZipEvent::ExtractionStarted {
         source: reader.source_path().to_path_buf(),
     });
@@ -355,7 +355,8 @@ mod tests {
     }
 
     /// テスト用のセットアップヘルパー
-    /// FakeZipReader用のパスとtargetディレクトリを返す
+    /// FakeZipReader用の仮想パスとtargetディレクトリを返す
+    /// zip_pathは実ファイルではなくFakeZipReader::source_path()用の識別子
     /// targetはcanonicalize()のために実FS上に作成する
     fn setup_test_dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let dir = tempfile::TempDir::new().unwrap();
