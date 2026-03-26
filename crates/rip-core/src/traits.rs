@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::Path;
 
 use crate::error::ZipError;
@@ -74,15 +74,10 @@ pub trait FileWriter {
     /// ディレクトリを再帰的に作成する
     fn create_dir_all(&self, path: &Path) -> Result<(), ZipError>;
 
-    /// ファイルを書き込む（readerからデータを読み取り、パーミッションを設定）
+    /// ファイルを書き込む（バイトデータを書き込み、パーミッションを設定）
     ///
     /// 返り値は書き込んだバイト数。
-    fn write_file(
-        &self,
-        path: &Path,
-        reader: &mut dyn Read,
-        permissions: u32,
-    ) -> Result<u64, ZipError>;
+    fn write_file(&self, path: &Path, data: &[u8], permissions: u32) -> Result<u64, ZipError>;
 
     /// パスが存在するかを判定する
     fn exists(&self, path: &Path) -> bool;

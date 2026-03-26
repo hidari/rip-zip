@@ -35,6 +35,13 @@ pub const MAX_FILE_PERMISSIONS: u32 = 0o755;
 /// ディレクトリのパーミッション上限
 pub const MAX_DIR_PERMISSIONS: u32 = 0o755;
 
+/// Vec::with_capacityの事前割り当て上限（64MB）
+///
+/// ZIPヘッダのuncompressed_sizeはattacker-controlledであり、
+/// そのままwith_capacityに渡すと巨大な事前割り当てが発生しうる。
+/// 上限をキャップしてもVecは必要に応じて自動的にgrowするため機能的影響はない。
+pub const MAX_CAPACITY_HINT: u64 = 64 * 1024 * 1024;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,5 +99,10 @@ mod tests {
     #[test]
     fn max_dir_permissions_equals_octal_755() {
         assert_eq!(MAX_DIR_PERMISSIONS, 0o755);
+    }
+
+    #[test]
+    fn max_capacity_hint_equals_64mb() {
+        assert_eq!(MAX_CAPACITY_HINT, 64 * 1024 * 1024);
     }
 }

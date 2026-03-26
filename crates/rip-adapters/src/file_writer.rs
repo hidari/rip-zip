@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Read};
+use std::io::Write;
 use std::path::Path;
 
 use rip_core::error::ZipError;
@@ -16,14 +16,10 @@ impl FileWriter for FsFileWriter {
         Ok(())
     }
 
-    fn write_file(
-        &self,
-        path: &Path,
-        reader: &mut dyn Read,
-        permissions: u32,
-    ) -> Result<u64, ZipError> {
+    fn write_file(&self, path: &Path, data: &[u8], permissions: u32) -> Result<u64, ZipError> {
         let mut file = fs::File::create(path)?;
-        let bytes = io::copy(reader, &mut file)?;
+        file.write_all(data)?;
+        let bytes = data.len() as u64;
 
         // File::set_permissions()はUnixではfchmod(2)ベースのため、
         // パスベースのfs::set_permissions()よりもTOCTOU耐性が高い
@@ -58,8 +54,6 @@ impl FileWriter for FsFileWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
-
     mod create_dir_all {
         use super::*;
 
@@ -105,15 +99,14 @@ mod tests {
         use super::*;
 
         #[test]
-        fn writes_data_from_reader_to_file() {
-            // readerからデータを読み取りファイルに書き込めること
+        fn writes_data_to_file() {
+            // バイトデータをファイルに書き込めること
             let dir = tempfile::TempDir::new().unwrap();
             let target = dir.path().join("output.txt");
             let content = b"hello, file writer!";
 
             let writer = FsFileWriter;
-            let mut reader = Cursor::new(content);
-            writer.write_file(&target, &mut reader, 0o644).unwrap();
+            writer.write_file(&target, content, 0o644).unwrap();
 
             let written = fs::read(&target).unwrap();
             assert_eq!(written, content);
@@ -127,8 +120,7 @@ mod tests {
             let content = b"exactly 27 bytes of content!";
 
             let writer = FsFileWriter;
-            let mut reader = Cursor::new(content);
-            let bytes = writer.write_file(&target, &mut reader, 0o644).unwrap();
+            let bytes = writer.write_file(&target, content, 0o644).unwrap();
 
             assert_eq!(bytes, content.len() as u64);
         }
@@ -140,8 +132,7 @@ mod tests {
             let target = dir.path().join("empty.txt");
 
             let writer = FsFileWriter;
-            let mut reader = Cursor::new(b"");
-            let bytes = writer.write_file(&target, &mut reader, 0o644).unwrap();
+            let bytes = writer.write_file(&target, b"", 0o644).unwrap();
 
             assert_eq!(bytes, 0);
             assert_eq!(fs::read(&target).unwrap().len(), 0);
@@ -157,8 +148,7 @@ mod tests {
             let target = dir.path().join("exec.sh");
 
             let writer = FsFileWriter;
-            let mut reader = Cursor::new(b"#!/bin/bash");
-            writer.write_file(&target, &mut reader, 0o755).unwrap();
+            writer.write_file(&target, b"#!/bin/bash", 0o755).unwrap();
 
             let metadata = fs::metadata(&target).unwrap();
             let mode = metadata.permissions().mode() & 0o777;
@@ -169,12 +159,8 @@ mod tests {
         fn returns_io_error_for_nonexistent_parent() {
             // 存在しないディレクトリへの書き込みがIoエラーを返すこと
             let writer = FsFileWriter;
-            let mut reader = Cursor::new(b"data");
-            let result = writer.write_file(
-                Path::new("/nonexistent/parent/file.txt"),
-                &mut reader,
-                0o644,
-            );
+            let result =
+                writer.write_file(Path::new("/nonexistent/parent/file.txt"), b"data", 0o644);
 
             assert!(result.is_err());
         }

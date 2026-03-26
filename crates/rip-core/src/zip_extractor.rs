@@ -1,7 +1,7 @@
 use std::collections::HashSet;
-use std::io::Cursor;
 use std::path::Path;
 
+use crate::config::MAX_CAPACITY_HINT;
 use crate::error::ZipError;
 use crate::path_utils;
 use crate::traits::{FileWriter, ZipReader};
@@ -193,11 +193,11 @@ pub fn extract_zip(
             });
         }
 
-        // k. ファイル展開（ZipReader::extract_entry(Write) → FileWriter::write_file(Read)をブリッジ）
-        let mut buffer = Vec::with_capacity(entry.uncompressed_size as usize);
+        // k. ファイル展開
+        let capacity = usize::try_from(entry.uncompressed_size.min(MAX_CAPACITY_HINT)).unwrap_or(0);
+        let mut buffer = Vec::with_capacity(capacity);
         reader.extract_entry(source_zip, &entry.name, &mut buffer)?;
-        let mut cursor = Cursor::new(buffer);
-        let bytes_written = writer.write_file(&dest_path, &mut cursor, sanitized_perms)?;
+        let bytes_written = writer.write_file(&dest_path, &buffer, sanitized_perms)?;
 
         stats.total_size += bytes_written;
         stats.file_count += 1;
@@ -226,7 +226,7 @@ mod tests {
     use crate::types::ZipEntryInfo;
     use std::cell::RefCell;
     use std::collections::HashMap;
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::path::PathBuf;
 
     // --- Fake実装 ---
@@ -295,18 +295,11 @@ mod tests {
             Ok(())
         }
 
-        fn write_file(
-            &self,
-            path: &Path,
-            reader: &mut dyn Read,
-            permissions: u32,
-        ) -> Result<u64, ZipError> {
-            let mut data = Vec::new();
-            reader.read_to_end(&mut data).map_err(ZipError::Io)?;
+        fn write_file(&self, path: &Path, data: &[u8], permissions: u32) -> Result<u64, ZipError> {
             let size = data.len() as u64;
             self.files_written
                 .borrow_mut()
-                .push((path.to_path_buf(), data, permissions));
+                .push((path.to_path_buf(), data.to_vec(), permissions));
             Ok(size)
         }
 
