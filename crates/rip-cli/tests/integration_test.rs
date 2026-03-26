@@ -2,10 +2,14 @@ use std::fs;
 use std::fs::File;
 use std::path::Path;
 
+use rip_adapters::file_writer::FsFileWriter;
 use rip_adapters::walkdir_walker::WalkDirWalker;
 use rip_adapters::zip_archiver::ZipWriterArchiver;
+use rip_adapters::zip_reader::ZipArchiveReader;
 use rip_core::error::ZipError;
+use rip_core::types::{ExtractOptions, ExtractStats};
 use rip_core::zip_creator;
+use rip_core::zip_extractor;
 use tempfile::TempDir;
 
 // --- テストヘルパー ---
@@ -26,6 +30,17 @@ fn create_zip_with_adapters(
         use_zip64,
         &|_| {},
     )
+}
+
+/// 実アダプターを使用してZIPを展開するヘルパー
+fn extract_zip_with_adapters(
+    zip_path: &Path,
+    target_dir: &Path,
+    options: &ExtractOptions,
+) -> Result<ExtractStats, ZipError> {
+    let mut reader = ZipArchiveReader::new(zip_path)?;
+    let writer = FsFileWriter;
+    zip_extractor::extract_zip(&mut reader, &writer, target_dir, options, &|_| {})
 }
 
 /// 国際化テスト: 日本語ファイル名、絵文字、NFD/NFC正規化、パス区切り文字の統一
@@ -680,6 +695,152 @@ mod events {
         assert!(
             *symlink_skipped.borrow(),
             "SymlinkSkipped event should be emitted"
+        );
+
+        Ok(())
+    }
+}
+
+/// ZIP展開の統合テスト: 作成→展開のラウンドトリップで正しく動作することを検証
+mod extraction {
+    use super::*;
+    use rip_core::types::ZipEvent;
+    use std::cell::RefCell;
+
+    #[test]
+    fn round_trip_preserves_file_content() -> Result<(), Box<dyn std::error::Error>> {
+        // 作成→展開のラウンドトリップでファイル内容が保持されること
+        let temp_dir = TempDir::new()?;
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir(&source_dir)?;
+        fs::write(source_dir.join("hello.txt"), "Hello, World!")?;
+        fs::write(source_dir.join("data.bin"), vec![0u8, 1, 2, 255])?;
+
+        let zip_path = temp_dir.path().join("test.zip");
+        create_zip_with_adapters(&source_dir, &zip_path, false)?;
+
+        let target_dir = temp_dir.path().join("output");
+        let stats = extract_zip_with_adapters(&zip_path, &target_dir, &ExtractOptions::default())?;
+
+        assert_eq!(stats.file_count, 2);
+        assert_eq!(
+            fs::read_to_string(target_dir.join("hello.txt"))?,
+            "Hello, World!"
+        );
+        assert_eq!(fs::read(target_dir.join("data.bin"))?, vec![0u8, 1, 2, 255]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn round_trip_preserves_nested_directory_structure() -> Result<(), Box<dyn std::error::Error>> {
+        // ネストしたディレクトリ構造が展開後も保持されること
+        let temp_dir = TempDir::new()?;
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir_all(source_dir.join("a/b/c"))?;
+        fs::write(source_dir.join("a/b/c/deep.txt"), "deep")?;
+        fs::write(source_dir.join("a/top.txt"), "top")?;
+
+        let zip_path = temp_dir.path().join("test.zip");
+        create_zip_with_adapters(&source_dir, &zip_path, false)?;
+
+        let target_dir = temp_dir.path().join("output");
+        extract_zip_with_adapters(&zip_path, &target_dir, &ExtractOptions::default())?;
+
+        assert_eq!(
+            fs::read_to_string(target_dir.join("a/b/c/deep.txt"))?,
+            "deep"
+        );
+        assert_eq!(fs::read_to_string(target_dir.join("a/top.txt"))?, "top");
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn round_trip_preserves_unix_permissions() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Unixパーミッションが展開後も保持されること
+        let temp_dir = TempDir::new()?;
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir(&source_dir)?;
+
+        let exec_file = source_dir.join("run.sh");
+        fs::write(&exec_file, "#!/bin/bash")?;
+        fs::set_permissions(&exec_file, fs::Permissions::from_mode(0o755))?;
+
+        let zip_path = temp_dir.path().join("test.zip");
+        create_zip_with_adapters(&source_dir, &zip_path, false)?;
+
+        let target_dir = temp_dir.path().join("output");
+        extract_zip_with_adapters(&zip_path, &target_dir, &ExtractOptions::default())?;
+
+        let extracted_mode = fs::metadata(target_dir.join("run.sh"))?
+            .permissions()
+            .mode();
+        assert_eq!(extracted_mode & 0o777, 0o755);
+
+        Ok(())
+    }
+
+    #[test]
+    fn emits_extraction_started_with_source_path() -> Result<(), Box<dyn std::error::Error>> {
+        // ExtractionStartedイベントのsourceがZIPファイルのパスと一致すること
+        let temp_dir = TempDir::new()?;
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir(&source_dir)?;
+        fs::write(source_dir.join("file.txt"), "data")?;
+
+        let zip_path = temp_dir.path().join("test.zip");
+        create_zip_with_adapters(&source_dir, &zip_path, false)?;
+
+        let target_dir = temp_dir.path().join("output");
+        let mut reader = ZipArchiveReader::new(&zip_path)?;
+        let writer = FsFileWriter;
+        let started_source: RefCell<Option<std::path::PathBuf>> = RefCell::new(None);
+
+        zip_extractor::extract_zip(
+            &mut reader,
+            &writer,
+            &target_dir,
+            &ExtractOptions::default(),
+            &|event| {
+                if let ZipEvent::ExtractionStarted { source } = event {
+                    *started_source.borrow_mut() = Some(source);
+                }
+            },
+        )?;
+
+        assert_eq!(*started_source.borrow(), Some(zip_path));
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_nonexistent_zip_path() {
+        // 存在しないZIPパスはValidationエラーを返すこと
+        let result = ZipArchiveReader::new(Path::new("/nonexistent/test.zip"));
+        assert!(matches!(result, Err(ZipError::Validation(msg)) if msg.contains("does not exist")));
+    }
+
+    #[test]
+    fn round_trip_japanese_filenames() -> Result<(), Box<dyn std::error::Error>> {
+        // 日本語ファイル名がラウンドトリップで保持されること
+        let temp_dir = TempDir::new()?;
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir(&source_dir)?;
+        fs::write(source_dir.join("テスト.txt"), "日本語テスト")?;
+
+        let zip_path = temp_dir.path().join("test.zip");
+        create_zip_with_adapters(&source_dir, &zip_path, false)?;
+
+        let target_dir = temp_dir.path().join("output");
+        extract_zip_with_adapters(&zip_path, &target_dir, &ExtractOptions::default())?;
+
+        assert_eq!(
+            fs::read_to_string(target_dir.join("テスト.txt"))?,
+            "日本語テスト"
         );
 
         Ok(())
