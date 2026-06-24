@@ -23,7 +23,7 @@
 ## [MUST] 必ず守らなければならないルール
 
 - 原則として feature-devプラグイン を使用する
-- 作業開始前に `git-branch-switcher` スキルでブランチを選択する
+- 作業開始前に `dev-workflow:git-branch-switcher` スキルでブランチを選択する
 - コードの修正が終わったら最初に `cargo xtask fmt` でLint等を実行する
 - ブランチのpush後は以下の手順でPull Requestを確認してください
     1. `gh pr list --head $(git branch --show-current) --base main` で Pull Request の存在を確認
